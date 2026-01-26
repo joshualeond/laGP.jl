@@ -18,6 +18,9 @@ examples/*.pdf
 *.png
 *.pdf
 
+# Allow documentation assets
+!docs/src/assets/*.png
+
 # Editors
 .vscode/
 .idea/

@@ -1,0 +1,10 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+LiveServer = "16fef848-5104-11e9-1b77-fb7a48bbb589"
+laGP = "895baa0a-b668-4fc8-b1fe-ed27223c4cb2"
+
+[sources]
+laGP = {path = "/Users/joshualeond/Documents/laGP.jl"}
+
+[compat]
+Documenter = "1"
