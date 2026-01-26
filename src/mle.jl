@@ -574,8 +574,6 @@ end
 # Zygote-based Automatic Differentiation Gradients
 # ============================================================================
 
-using Zygote
-
 """
     neg_llik_ad(params, X, Z; separable=false)
 

@@ -1,6 +1,27 @@
 # Local Approximate GP functions
 
 """
+    _compute_squared_distances(X, Xref)
+
+Compute squared Euclidean distances from Xref to all rows of X.
+Returns a vector of length n where n is the number of rows in X.
+"""
+function _compute_squared_distances(X::Matrix{T}, Xref::Vector{T}) where {T}
+    n = size(X, 1)
+    m = length(Xref)
+    distances = Vector{T}(undef, n)
+    @inbounds for i in 1:n
+        dist_sq = zero(T)
+        for j in 1:m
+            diff = X[i, j] - Xref[j]
+            dist_sq += diff * diff
+        end
+        distances[i] = dist_sq
+    end
+    return distances
+end
+
+"""
     lagp(Xref, start, endpt, X, Z; d, g, method=:alc, verb=0)
 
 Local Approximate GP prediction at a single reference point.
@@ -32,18 +53,8 @@ function lagp(Xref::Vector{T}, start::Int, endpt::Int, X::Matrix{T}, Z::Vector{T
     @assert endpt <= n "endpt must be <= n (number of training points)"
     @assert method in (:alc, :mspe, :nn) "method must be :alc, :mspe, or :nn"
 
-    # Compute distances from Xref to all training points
-    distances = Vector{T}(undef, n)
-    for i in 1:n
-        dist_sq = zero(T)
-        for j in 1:m
-            diff = X[i, j] - Xref[j]
-            dist_sq += diff * diff
-        end
-        distances[i] = dist_sq
-    end
-
-    # Get indices sorted by distance
+    # Compute distances from Xref to all training points and sort
+    distances = _compute_squared_distances(X, Xref)
     sorted_indices = sortperm(distances)
 
     # Initialize with nearest neighbors
@@ -218,18 +229,8 @@ function _agp_single(X::Matrix{T}, Z::Vector{T}, Xref::Vector{T},
     n = size(X, 1)
     m = length(Xref)
 
-    # Compute distances from Xref to all training points
-    distances = Vector{T}(undef, n)
-    for i in 1:n
-        dist_sq = zero(T)
-        for j in 1:m
-            diff = X[i, j] - Xref[j]
-            dist_sq += diff * diff
-        end
-        distances[i] = dist_sq
-    end
-
-    # Get indices sorted by distance
+    # Compute distances from Xref to all training points and sort
+    distances = _compute_squared_distances(X, Xref)
     sorted_indices = sortperm(distances)
 
     # Initialize with nearest neighbors
@@ -337,18 +338,8 @@ function lagp_model(Xref::Vector{T}, start::Int, endpt::Int, X::Matrix{T}, Z::Ve
     @assert endpt <= n "endpt must be <= n (number of training points)"
     @assert method in (:alc, :mspe, :nn) "method must be :alc, :mspe, or :nn"
 
-    # Compute distances from Xref to all training points
-    distances = Vector{T}(undef, n)
-    for i in 1:n
-        dist_sq = zero(T)
-        for j in 1:m
-            diff = X[i, j] - Xref[j]
-            dist_sq += diff * diff
-        end
-        distances[i] = dist_sq
-    end
-
-    # Get indices sorted by distance
+    # Compute distances from Xref to all training points and sort
+    distances = _compute_squared_distances(X, Xref)
     sorted_indices = sortperm(distances)
 
     # Initialize with nearest neighbors
@@ -520,18 +511,8 @@ function _agp_model_single(X::Matrix{T}, Z::Vector{T}, Xref::Vector{T},
     n = size(X, 1)
     m = length(Xref)
 
-    # Compute distances from Xref to all training points
-    distances = Vector{T}(undef, n)
-    for i in 1:n
-        dist_sq = zero(T)
-        for j in 1:m
-            diff = X[i, j] - Xref[j]
-            dist_sq += diff * diff
-        end
-        distances[i] = dist_sq
-    end
-
-    # Get indices sorted by distance
+    # Compute distances from Xref to all training points and sort
+    distances = _compute_squared_distances(X, Xref)
     sorted_indices = sortperm(distances)
 
     # Initialize with nearest neighbors

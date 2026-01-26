@@ -2,14 +2,12 @@ using JSON3
 using laGP
 using Test
 
+include("test_utils.jl")
+
 # Load reference data
 const MLE_REF = JSON3.read(
     read(joinpath(@__DIR__, "reference", "mle.json"), String)
 )
-
-function _reshape_matrix(vec::Vector, nrow::Int, ncol::Int)
-    return reshape(vec, ncol, nrow)' |> collect
-end
 
 @testset "MLE" begin
     # Extract test data

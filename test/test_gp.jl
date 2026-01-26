@@ -2,16 +2,12 @@ using JSON3
 using laGP
 using Test
 
+include("test_utils.jl")
+
 # Load reference data
 const GP_BASIC_REF = JSON3.read(
     read(joinpath(@__DIR__, "reference", "gp_basic.json"), String)
 )
-
-function _reshape_matrix(vec::Vector, nrow::Int, ncol::Int)
-    # R stores matrices column-major, but we saved row-major (as.vector(t(X)))
-    # So we reshape to nrow x ncol directly
-    return reshape(vec, ncol, nrow)' |> collect
-end
 
 @testset "GP Basic" begin
     # Extract test data from reference

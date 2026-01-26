@@ -2,14 +2,12 @@ using JSON3
 using laGP
 using Test
 
+include("test_utils.jl")
+
 # Load reference data
 const LAGP_REF = JSON3.read(
     read(joinpath(@__DIR__, "reference", "lagp.json"), String)
 )
-
-function _reshape_matrix(vec::Vector, nrow::Int, ncol::Int)
-    return reshape(vec, ncol, nrow)' |> collect
-end
 
 @testset "Local Approximate GP" begin
     # Extract test data

@@ -3,6 +3,67 @@
 using AbstractGPs: GP as AbstractGP, posterior, mean, var
 using KernelFunctions: SqExponentialKernel, with_lengthscale, ARDTransform, kernelmatrix!, kernelmatrix, RowVecs
 
+# ============================================================================
+# Shared helper functions
+# ============================================================================
+
+"""
+    _concentrated_llik(n, phi, ldetK)
+
+Compute the concentrated (profile) log-likelihood used by laGP.
+
+Formula: llik = -0.5 * (n * log(0.5 * phi) + ldetK)
+
+This is shared across all GP model types (GP, GPsep, GPModel, GPModelSep).
+"""
+function _concentrated_llik(n::Int, phi::T, ldetK::T) where {T}
+    return -T(0.5) * (n * log(T(0.5) * phi) + ldetK)
+end
+
+"""
+    _add_nugget_diagonal!(K, g)
+
+Add nugget to diagonal of matrix K in-place.
+"""
+function _add_nugget_diagonal!(K::Matrix{T}, g::T) where {T}
+    n = size(K, 1)
+    @inbounds for i in 1:n
+        K[i, i] += g
+    end
+    return K
+end
+
+"""
+    _compute_logdet_chol(chol)
+
+Compute log determinant from Cholesky factorization.
+"""
+function _compute_logdet_chol(chol::Cholesky{T}) where {T}
+    return 2 * sum(log.(diag(chol.L)))
+end
+
+"""
+    _compute_lite_variance(k, Kik, phi, n, g)
+
+Compute diagonal (lite) variance for GP predictions.
+
+Formula: s2[j] = (phi/n) * (1 + g - k[:,j]' * Ki * k[:,j])
+"""
+function _compute_lite_variance(k::Matrix{T}, Kik::Matrix{T}, phi::T, n::Int, g::T) where {T}
+    n_test = size(k, 2)
+    n_train = size(k, 1)
+    s2 = Vector{T}(undef, n_test)
+    scale = phi / n
+    @inbounds for j in 1:n_test
+        kKik = zero(T)
+        for i in 1:n_train
+            kKik += k[i, j] * Kik[i, j]
+        end
+        s2[j] = scale * (one(T) + g - kKik)
+    end
+    return s2
+end
+
 """
     _compute_covariance!(K, X, d, g)
 
@@ -29,9 +90,7 @@ function _compute_covariance!(K::Matrix{T}, X::Matrix{T}, d::T, g::T) where {T}
     kernelmatrix!(K, kernel, RowVecs(X))
 
     # Add nugget to diagonal
-    @inbounds for i in 1:n
-        K[i, i] += g
-    end
+    _add_nugget_diagonal!(K, g)
 
     return K
 end
@@ -98,7 +157,7 @@ function new_gp(X::Matrix{T}, Z::Vector{T}, d::Real, g::Real) where {T<:Real}
     phi = dot(Z, KiZ)
 
     # Log determinant
-    ldetK = 2 * sum(log.(diag(chol.L)))
+    ldetK = _compute_logdet_chol(chol)
 
     return GP{T}(copy(X), copy(Z), K, chol, Ki, KiZ, d_T, g_T, phi, ldetK)
 end
@@ -126,22 +185,12 @@ function pred_gp(gp::GP{T}, XX::Matrix{T}; lite::Bool=true) where {T}
     # Mean prediction: mu = k' * Ki * Z
     mean = k' * gp.KiZ
 
-    # Variance computation
-    # Ki * k
+    # Variance computation: Ki * k
     Kik = gp.chol \ k
 
     if lite
         # Diagonal variances only
-        # sigma^2 = phi/n * (1 + g - k' * Ki * k)
-        s2 = Vector{T}(undef, n_test)
-        scale = gp.phi / n
-        @inbounds for j in 1:n_test
-            kKik = zero(T)
-            for i in 1:n
-                kKik += k[i, j] * Kik[i, j]
-            end
-            s2[j] = scale * (one(T) + gp.g - kKik)
-        end
+        s2 = _compute_lite_variance(k, Kik, gp.phi, n, gp.g)
         return GPPrediction{T}(mean, s2, n)
     else
         # Full covariance matrix
@@ -174,10 +223,7 @@ Uses the formula from R laGP (proportional to likelihood):
 - `Real`: log-likelihood value
 """
 function llik_gp(gp::GP{T}) where {T}
-    n = length(gp.Z)
-    # Match R laGP formula: llik = -0.5 * (n * log(0.5 * phi) + ldetK)
-    llik = -T(0.5) * (n * log(T(0.5) * gp.phi) + gp.ldetK)
-    return llik
+    return _concentrated_llik(length(gp.Z), gp.phi, gp.ldetK)
 end
 
 """
@@ -243,41 +289,6 @@ function dllik_gp(gp::GP{T}; dg::Bool=true, dd::Bool=true) where {T}
 end
 
 """
-    _compute_dK_dd(X, K, d, g)
-
-Compute derivative of covariance matrix w.r.t. lengthscale d.
-
-For the isotropic kernel K[i,j] = exp(-||x_i - x_j||^2 / d):
-    dK[i,j]/dd = K[i,j] * ||x_i - x_j||^2 / d^2
-
-Note: The stored K includes the nugget on diagonal, but we use the off-diagonal
-structure which doesn't include nugget.
-"""
-function _compute_dK_dd(X::Matrix{T}, K::Matrix{T}, d::T, g::T) where {T}
-    n = size(X, 1)
-    dK = Matrix{T}(undef, n, n)
-    d_sq = d^2
-
-    @inbounds for j in 1:n
-        for i in j:n
-            if i == j
-                dK[i, j] = zero(T)  # Diagonal (nugget) doesn't depend on d
-            else
-                dist_sq = zero(T)
-                for m in axes(X, 2)
-                    diff = X[i, m] - X[j, m]
-                    dist_sq += diff * diff
-                end
-                # K[i,j] is the kernel value (without nugget since i != j)
-                dK[i, j] = K[i, j] * dist_sq / d_sq
-                dK[j, i] = dK[i, j]
-            end
-        end
-    end
-    return dK
-end
-
-"""
     update_gp!(gp; d=nothing, g=nothing)
 
 Update GP hyperparameters and recompute internal quantities.
@@ -318,7 +329,7 @@ function update_gp!(gp::GP{T}; d::Union{Nothing,Real}=nothing,
         gp.phi = dot(gp.Z, gp.KiZ)
 
         # Recompute log determinant
-        gp.ldetK = 2 * sum(log.(diag(gp.chol.L)))
+        gp.ldetK = _compute_logdet_chol(gp.chol)
     end
 
     return gp
@@ -343,8 +354,6 @@ optimized kernel matrix computation.
 """
 function _compute_covariance_sep!(K::Matrix{T}, X::Matrix{T},
                                    d::Vector{T}, g::T) where {T}
-    n = size(X, 1)
-
     # KernelFunctions with ARDTransform(v) applies: x -> v .* x
     # SqExponentialKernel: exp(-||x-y||²/2)
     # Combined: exp(-0.5 * Σ_k v[k]² * (x[k] - y[k])²)
@@ -357,9 +366,7 @@ function _compute_covariance_sep!(K::Matrix{T}, X::Matrix{T},
     kernelmatrix!(K, kernel, RowVecs(X))
 
     # Add nugget to diagonal
-    @inbounds for i in 1:n
-        K[i, i] += g
-    end
+    _add_nugget_diagonal!(K, g)
 
     return K
 end
@@ -428,7 +435,7 @@ function new_gp_sep(X::Matrix{T}, Z::Vector{T}, d::Vector{<:Real}, g::Real) wher
     phi = dot(Z, KiZ)
 
     # Log determinant
-    ldetK = 2 * sum(log.(diag(chol.L)))
+    ldetK = _compute_logdet_chol(chol)
 
     return GPsep{T}(copy(X), copy(Z), K, chol, Ki, KiZ, d_T, g_T, phi, ldetK)
 end
@@ -478,7 +485,7 @@ function update_gp_sep!(gp::GPsep{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
         gp.phi = dot(gp.Z, gp.KiZ)
 
         # Recompute log determinant
-        gp.ldetK = 2 * sum(log.(diag(gp.chol.L)))
+        gp.ldetK = _compute_logdet_chol(gp.chol)
     end
 
     return gp
@@ -507,22 +514,12 @@ function pred_gp_sep(gp::GPsep{T}, XX::Matrix{T}; lite::Bool=true) where {T}
     # Mean prediction: mu = k' * Ki * Z
     mean = k' * gp.KiZ
 
-    # Variance computation
-    # Ki * k
+    # Variance computation: Ki * k
     Kik = gp.chol \ k
 
     if lite
         # Diagonal variances only
-        # sigma^2 = phi/n * (1 + g - k' * Ki * k)
-        s2 = Vector{T}(undef, n_test)
-        scale = gp.phi / n
-        @inbounds for j in 1:n_test
-            kKik = zero(T)
-            for i in 1:n
-                kKik += k[i, j] * Kik[i, j]
-            end
-            s2[j] = scale * (one(T) + gp.g - kKik)
-        end
+        s2 = _compute_lite_variance(k, Kik, gp.phi, n, gp.g)
         return GPPrediction{T}(mean, s2, n)
     else
         # Full covariance matrix
@@ -555,10 +552,7 @@ Uses the formula from R laGP (proportional to likelihood):
 - `Real`: log-likelihood value
 """
 function llik_gp_sep(gp::GPsep{T}) where {T}
-    n = length(gp.Z)
-    # Match R laGP formula: llik = -0.5 * (n * log(0.5 * phi) + ldetK)
-    llik = -T(0.5) * (n * log(T(0.5) * gp.phi) + gp.ldetK)
-    return llik
+    return _concentrated_llik(length(gp.Z), gp.phi, gp.ldetK)
 end
 
 """
@@ -628,37 +622,6 @@ function dllik_gp_sep(gp::GPsep{T}; dg::Bool=true, dd::Bool=true) where {T}
     return (dllg=dllg, dlld=dlld)
 end
 
-"""
-    _compute_dK_dd_sep(X, K, d, g, k)
-
-Compute derivative of covariance matrix w.r.t. lengthscale d[k].
-
-For the separable kernel K[i,j] = exp(-Σ_m (x_i[m] - x_j[m])² / d[m]):
-    dK[i,j]/d(d[k]) = K[i,j] * (X[i,k] - X[j,k])² / d[k]²
-
-Note: The stored K includes the nugget on diagonal, but we use the off-diagonal
-structure which doesn't include nugget.
-"""
-function _compute_dK_dd_sep(X::Matrix{T}, K::Matrix{T}, d::Vector{T}, g::T, k::Int) where {T}
-    n = size(X, 1)
-    dK = Matrix{T}(undef, n, n)
-    dk_sq = d[k]^2
-
-    @inbounds for j in 1:n
-        for i in j:n
-            if i == j
-                dK[i, j] = zero(T)  # Diagonal (nugget) doesn't depend on d[k]
-            else
-                diff = X[i, k] - X[j, k]
-                # K[i,j] is the kernel value (without nugget since i != j)
-                dK[i, j] = K[i, j] * (diff * diff) / dk_sq
-                dK[j, i] = dK[i, j]
-            end
-        end
-    end
-    return dK
-end
-
 # ============================================================================
 # AbstractGPs-backed GP functions (GPModel)
 # ============================================================================
@@ -691,9 +654,7 @@ function new_gp_model(X::Matrix{T}, Z::Vector{T}, d::Real, g::Real) where {T<:Re
 
     # Compute covariance matrix with nugget
     K = kernelmatrix(kernel, RowVecs(X))
-    for i in 1:n
-        K[i, i] += g_T
-    end
+    _add_nugget_diagonal!(K, g_T)
 
     # Cholesky factorization
     chol = cholesky(Symmetric(K))
@@ -705,7 +666,7 @@ function new_gp_model(X::Matrix{T}, Z::Vector{T}, d::Real, g::Real) where {T<:Re
     phi = dot(Z, KiZ)
 
     # Log determinant
-    ldetK = 2 * sum(log.(diag(chol.L)))
+    ldetK = _compute_logdet_chol(chol)
 
     return GPModel{T,typeof(kernel)}(copy(X), copy(Z), kernel, chol, KiZ, d_T, g_T, phi, ldetK)
 end
@@ -738,16 +699,7 @@ function pred_gp_model(gp::GPModel{T}, XX::Matrix{T}; lite::Bool=true) where {T}
 
     if lite
         # Diagonal variances only
-        # sigma^2 = phi/n * (1 + g - k' * Ki * k)
-        s2 = Vector{T}(undef, n_test)
-        scale = gp.phi / n
-        @inbounds for j in 1:n_test
-            kKik = zero(T)
-            for i in 1:n
-                kKik += k[i, j] * Kik[i, j]
-            end
-            s2[j] = scale * (one(T) + gp.g - kKik)
-        end
+        s2 = _compute_lite_variance(k, Kik, gp.phi, n, gp.g)
         return GPPrediction{T}(mean_pred, s2, n)
     else
         # Full covariance matrix
@@ -756,9 +708,7 @@ function pred_gp_model(gp::GPModel{T}, XX::Matrix{T}; lite::Bool=true) where {T}
 
         # Compute K(XX, XX) + g*I (test-test covariance)
         K_test = kernelmatrix(gp.kernel, RowVecs(XX))
-        for i in 1:n_test
-            K_test[i, i] += gp.g
-        end
+        _add_nugget_diagonal!(K_test, gp.g)
 
         # Sigma = scale * (K_test - k' * Kik)
         Sigma = scale .* (K_test - k' * Kik)
@@ -782,8 +732,7 @@ Uses the concentrated likelihood formula from R laGP:
 - `Real`: log-likelihood value
 """
 function llik_gp_model(gp::GPModel{T}) where {T}
-    n = length(gp.Z)
-    return -T(0.5) * (n * log(T(0.5) * gp.phi) + gp.ldetK)
+    return _concentrated_llik(length(gp.Z), gp.phi, gp.ldetK)
 end
 
 """
@@ -868,13 +817,9 @@ function update_gp_model!(gp::GPModel{T}; d::Union{Nothing,Real}=nothing,
     end
 
     if changed
-        n = size(gp.X, 1)
-
         # Recompute covariance matrix
         K = kernelmatrix(gp.kernel, RowVecs(gp.X))
-        for i in 1:n
-            K[i, i] += gp.g
-        end
+        _add_nugget_diagonal!(K, gp.g)
 
         # Recompute Cholesky
         gp.chol = cholesky(Symmetric(K))
@@ -886,7 +831,7 @@ function update_gp_model!(gp::GPModel{T}; d::Union{Nothing,Real}=nothing,
         gp.phi = dot(gp.Z, gp.KiZ)
 
         # Recompute log determinant
-        gp.ldetK = 2 * sum(log.(diag(gp.chol.L)))
+        gp.ldetK = _compute_logdet_chol(gp.chol)
     end
 
     return gp
@@ -925,9 +870,7 @@ function new_gp_model_sep(X::Matrix{T}, Z::Vector{T}, d::Vector{<:Real}, g::Real
 
     # Compute covariance matrix with nugget
     K = kernelmatrix(kernel, RowVecs(X))
-    for i in 1:n
-        K[i, i] += g_T
-    end
+    _add_nugget_diagonal!(K, g_T)
 
     # Cholesky factorization
     chol = cholesky(Symmetric(K))
@@ -939,7 +882,7 @@ function new_gp_model_sep(X::Matrix{T}, Z::Vector{T}, d::Vector{<:Real}, g::Real
     phi = dot(Z, KiZ)
 
     # Log determinant
-    ldetK = 2 * sum(log.(diag(chol.L)))
+    ldetK = _compute_logdet_chol(chol)
 
     return GPModelSep{T,typeof(kernel)}(copy(X), copy(Z), kernel, chol, KiZ, d_T, g_T, phi, ldetK)
 end
@@ -972,15 +915,7 @@ function pred_gp_model_sep(gp::GPModelSep{T}, XX::Matrix{T}; lite::Bool=true) wh
 
     if lite
         # Diagonal variances only
-        s2 = Vector{T}(undef, n_test)
-        scale = gp.phi / n
-        @inbounds for j in 1:n_test
-            kKik = zero(T)
-            for i in 1:n
-                kKik += k[i, j] * Kik[i, j]
-            end
-            s2[j] = scale * (one(T) + gp.g - kKik)
-        end
+        s2 = _compute_lite_variance(k, Kik, gp.phi, n, gp.g)
         return GPPrediction{T}(mean_pred, s2, n)
     else
         # Full covariance matrix
@@ -989,9 +924,7 @@ function pred_gp_model_sep(gp::GPModelSep{T}, XX::Matrix{T}; lite::Bool=true) wh
 
         # Compute K(XX, XX) + g*I (test-test covariance)
         K_test = kernelmatrix(gp.kernel, RowVecs(XX))
-        for i in 1:n_test
-            K_test[i, i] += gp.g
-        end
+        _add_nugget_diagonal!(K_test, gp.g)
 
         # Sigma = scale * (K_test - k' * Kik)
         Sigma = scale .* (K_test - k' * Kik)
@@ -1012,8 +945,7 @@ Compute the log-likelihood of the GPModelSep.
 - `Real`: log-likelihood value
 """
 function llik_gp_model_sep(gp::GPModelSep{T}) where {T}
-    n = length(gp.Z)
-    return -T(0.5) * (n * log(T(0.5) * gp.phi) + gp.ldetK)
+    return _concentrated_llik(length(gp.Z), gp.phi, gp.ldetK)
 end
 
 """
@@ -1106,13 +1038,9 @@ function update_gp_model_sep!(gp::GPModelSep{T}; d::Union{Nothing,Vector{<:Real}
     end
 
     if changed
-        n = size(gp.X, 1)
-
         # Recompute covariance matrix
         K = kernelmatrix(gp.kernel, RowVecs(gp.X))
-        for i in 1:n
-            K[i, i] += gp.g
-        end
+        _add_nugget_diagonal!(K, gp.g)
 
         # Recompute Cholesky
         gp.chol = cholesky(Symmetric(K))
@@ -1124,7 +1052,7 @@ function update_gp_model_sep!(gp::GPModelSep{T}; d::Union{Nothing,Vector{<:Real}
         gp.phi = dot(gp.Z, gp.KiZ)
 
         # Recompute log determinant
-        gp.ldetK = 2 * sum(log.(diag(gp.chol.L)))
+        gp.ldetK = _compute_logdet_chol(gp.chol)
     end
 
     return gp

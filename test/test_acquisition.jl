@@ -3,14 +3,12 @@ using laGP
 using Statistics
 using Test
 
+include("test_utils.jl")
+
 # Load reference data
 const ACQ_REF = JSON3.read(
     read(joinpath(@__DIR__, "reference", "acquisition.json"), String)
 )
-
-function _reshape_matrix(vec::Vector, nrow::Int, ncol::Int)
-    return reshape(vec, ncol, nrow)' |> collect
-end
 
 @testset "Acquisition Functions" begin
     # Extract test data
