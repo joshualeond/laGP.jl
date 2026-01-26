@@ -25,9 +25,8 @@ makedocs(
     warnonly = [:missing_docs],
 )
 
-# Uncomment for GitHub Pages deployment
-# deploydocs(
-#     repo = "github.com/joshualeond/laGP.jl.git",
-#     devbranch = "main",
-#     push_preview = true,
-# )
+deploydocs(
+    repo = "github.com/joshualeond/laGP.jl.git",
+    devbranch = "main",
+    push_preview = true,
+)
