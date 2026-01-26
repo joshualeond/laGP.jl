@@ -1,6 +1,7 @@
 # Acquisition functions for sequential design
 
 using KernelFunctions: kernelmatrix, RowVecs
+using LinearAlgebra: mul!
 
 """
     alc_gp(gp, Xcand, Xref)
@@ -22,6 +23,7 @@ function alc_gp(gp::GP{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
     n = size(gp.X, 1)
     n_cand = size(Xcand, 1)
     n_ref = size(Xref, 1)
+    m_dim = size(gp.X, 2)
     df = T(n)
 
     # Pre-compute k(X, Xref) - covariance between training and reference
@@ -33,26 +35,29 @@ function alc_gp(gp::GP{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
     # Allocate output
     alc = Vector{T}(undef, n_cand)
 
+    # Pre-allocate workspace vectors (reused across candidates)
+    kx = Vector{T}(undef, n)
+    Kikx = Vector{T}(undef, n)
+    gvec = Vector{T}(undef, n)
+    kxy = Vector{T}(undef, n_ref)
+
     # Scaling factor: df / (df - 2)
     df_rat = df / (df - 2)
+    inv_d = one(T) / gp.d
 
-    for i in 1:n_cand
-        # Extract candidate point
-        x_cand = Xcand[i, :]
-
+    @inbounds for i in 1:n_cand
         # kx = k(X, x_cand) - covariance between training and candidate
-        kx = Vector{T}(undef, n)
         for j in 1:n
             dist_sq = zero(T)
-            for m in axes(gp.X, 2)
-                diff = gp.X[j, m] - x_cand[m]
+            for dim in 1:m_dim
+                diff = gp.X[j, dim] - Xcand[i, dim]
                 dist_sq += diff * diff
             end
-            kx[j] = exp(-dist_sq / gp.d)
+            kx[j] = exp(-dist_sq * inv_d)
         end
 
-        # Kikx = Ki * kx (precomputed vector)
-        Kikx = Ki * kx
+        # Kikx = Ki * kx (in-place)
+        mul!(Kikx, Ki, kx)
 
         # mui = 1 + g - kx' * Ki * kx
         mui = one(T) + gp.g - dot(kx, Kikx)
@@ -63,28 +68,31 @@ function alc_gp(gp::GP{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
             continue
         end
 
-        # gvec = -Kikx / mui
-        gvec = -Kikx / mui
+        # gvec = -Kikx / mui (in-place)
+        inv_mui = one(T) / mui
+        for j in 1:n
+            gvec[j] = -Kikx[j] * inv_mui
+        end
 
         # kxy = k(x_cand, Xref) - covariance between candidate and reference
-        kxy = Vector{T}(undef, n_ref)
         for j in 1:n_ref
             dist_sq = zero(T)
-            for m in axes(Xref, 2)
-                diff = x_cand[m] - Xref[j, m]
+            for dim in 1:m_dim
+                diff = Xcand[i, dim] - Xref[j, dim]
                 dist_sq += diff * diff
             end
-            kxy[j] = exp(-dist_sq / gp.d)
+            kxy[j] = exp(-dist_sq * inv_d)
         end
 
         # Compute ktKikx for each reference point
-        # ktKikx[j] = (k[:,j]' * gvec)^2 * mui + 2*(k[:,j]' * gvec)*kxy[j] + kxy[j]^2/mui
         alc_sum = zero(T)
         for j in 1:n_ref
-            kg = dot(k_ref[:, j], gvec)
-            ktKikx_j = kg^2 * mui + 2 * kg * kxy[j] + kxy[j]^2 / mui
-
-            # ALC contribution: phi * ktKikx / df * df_rat
+            # kg = k_ref[:, j]' * gvec
+            kg = zero(T)
+            for k in 1:n
+                kg += k_ref[k, j] * gvec[k]
+            end
+            ktKikx_j = kg * kg * mui + 2 * kg * kxy[j] + kxy[j] * kxy[j] * inv_mui
             alc_sum += gp.phi * ktKikx_j / df
         end
 
@@ -167,16 +175,20 @@ function alc_gp_model(gp::GPModel{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {
     # Allocate output
     alc = Vector{T}(undef, n_cand)
 
+    # Pre-allocate workspace vectors
+    Kikx = Vector{T}(undef, n)
+    gvec = Vector{T}(undef, n)
+
     # Scaling factor
     df_rat = df / (df - 2)
 
     for i in 1:n_cand
-        # kx = k(X, x_cand)
-        x_cand = Xcand[i:i, :]  # Keep as matrix for kernelmatrix
+        # kx = k(X, x_cand) - use view to avoid allocation
+        x_cand = @view Xcand[i:i, :]
         kx = vec(kernelmatrix(gp.kernel, RowVecs(gp.X), RowVecs(x_cand)))
 
-        # Kikx = Ki * kx
-        Kikx = Ki * kx
+        # Kikx = Ki * kx (in-place)
+        mul!(Kikx, Ki, kx)
 
         # mui = 1 + g - kx' * Ki * kx
         mui = one(T) + gp.g - dot(kx, Kikx)
@@ -187,17 +199,23 @@ function alc_gp_model(gp::GPModel{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {
             continue
         end
 
-        # gvec = -Kikx / mui
-        gvec = -Kikx / mui
+        # gvec = -Kikx / mui (in-place)
+        inv_mui = one(T) / mui
+        @inbounds for j in 1:n
+            gvec[j] = -Kikx[j] * inv_mui
+        end
 
         # kxy = k(x_cand, Xref)
         kxy = vec(kernelmatrix(gp.kernel, RowVecs(x_cand), RowVecs(Xref)))
 
         # Compute ALC contribution
         alc_sum = zero(T)
-        for j in 1:n_ref
-            kg = dot(k_ref[:, j], gvec)
-            ktKikx_j = kg^2 * mui + 2 * kg * kxy[j] + kxy[j]^2 / mui
+        @inbounds for j in 1:n_ref
+            kg = zero(T)
+            for k in 1:n
+                kg += k_ref[k, j] * gvec[k]
+            end
+            ktKikx_j = kg * kg * mui + 2 * kg * kxy[j] + kxy[j] * kxy[j] * inv_mui
             alc_sum += gp.phi * ktKikx_j / df
         end
 

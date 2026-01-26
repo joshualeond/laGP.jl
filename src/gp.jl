@@ -37,9 +37,16 @@ end
     _compute_logdet_chol(chol)
 
 Compute log determinant from Cholesky factorization.
+
+Optimized to avoid allocating a temporary vector for the diagonal.
 """
 function _compute_logdet_chol(chol::Cholesky{T}) where {T}
-    return 2 * sum(log.(diag(chol.L)))
+    ldetK = zero(T)
+    L = chol.L
+    @inbounds for i in axes(L, 1)
+        ldetK += log(L[i, i])
+    end
+    return 2 * ldetK
 end
 
 """
@@ -118,6 +125,30 @@ function _cross_covariance(X::Matrix{T}, XX::Matrix{T}, d::T) where {T}
 end
 
 """
+    _compute_pairwise_sq_distances!(dist_sq, X)
+
+Compute pairwise squared Euclidean distances and store in dist_sq.
+dist_sq[i,j] = ||X[i,:] - X[j,:]||²
+"""
+function _compute_pairwise_sq_distances!(dist_sq::Matrix{T}, X::Matrix{T}) where {T}
+    n = size(X, 1)
+    m = size(X, 2)
+    @inbounds for j in 1:n
+        dist_sq[j, j] = zero(T)
+        for i in (j+1):n
+            d_sq = zero(T)
+            for k in 1:m
+                diff = X[i, k] - X[j, k]
+                d_sq += diff * diff
+            end
+            dist_sq[i, j] = d_sq
+            dist_sq[j, i] = d_sq
+        end
+    end
+    return dist_sq
+end
+
+"""
     new_gp(X, Z, d, g)
 
 Create a new Gaussian Process model.
@@ -159,7 +190,11 @@ function new_gp(X::Matrix{T}, Z::Vector{T}, d::Real, g::Real) where {T<:Real}
     # Log determinant
     ldetK = _compute_logdet_chol(chol)
 
-    return GP{T}(copy(X), copy(Z), K, chol, Ki, KiZ, d_T, g_T, phi, ldetK)
+    # Cache pairwise squared distances for gradient computation
+    dist_sq = Matrix{T}(undef, n, n)
+    _compute_pairwise_sq_distances!(dist_sq, X)
+
+    return GP{T}(copy(X), copy(Z), K, chol, Ki, KiZ, dist_sq, d_T, g_T, phi, ldetK)
 end
 
 """
@@ -257,11 +292,11 @@ function dllik_gp(gp::GP{T}; dg::Bool=true, dd::Bool=true) where {T}
     end
 
     # Gradient w.r.t. lengthscale d
-    # Optimized: compute inline to avoid O(n³) matrix multiplication
+    # Uses cached pairwise squared distances for O(n²) instead of O(n²·m)
     dlld = zero(T)
     if dd
-        X = gp.X
         K = gp.K
+        dist_sq_mat = gp.dist_sq
         d_sq = gp.d^2
         tr_term = zero(T)
         quad_term = zero(T)
@@ -270,12 +305,7 @@ function dllik_gp(gp::GP{T}; dg::Bool=true, dd::Bool=true) where {T}
         @inbounds for j in 1:n
             for i in 1:n
                 if i != j
-                    dist_sq = zero(T)
-                    for m in axes(X, 2)
-                        diff = X[i, m] - X[j, m]
-                        dist_sq += diff * diff
-                    end
-                    dK_ij = K[i, j] * dist_sq / d_sq
+                    dK_ij = K[i, j] * dist_sq_mat[i, j] / d_sq
                     tr_term += Ki[i, j] * dK_ij
                     quad_term += KiZ[i] * dK_ij * KiZ[j]
                 end
@@ -395,6 +425,28 @@ function _cross_covariance_sep(X::Matrix{T}, XX::Matrix{T}, d::Vector{T}) where 
 end
 
 """
+    _compute_per_dim_sq_distances!(dist_sq, X)
+
+Compute per-dimension squared distances and store in 3D array.
+dist_sq[i,j,k] = (X[i,k] - X[j,k])² for each dimension k.
+"""
+function _compute_per_dim_sq_distances!(dist_sq::Array{T,3}, X::Matrix{T}) where {T}
+    n, m = size(X)
+    @inbounds for k in 1:m
+        for j in 1:n
+            dist_sq[j, j, k] = zero(T)
+            for i in (j+1):n
+                diff = X[i, k] - X[j, k]
+                d_sq = diff * diff
+                dist_sq[i, j, k] = d_sq
+                dist_sq[j, i, k] = d_sq
+            end
+        end
+    end
+    return dist_sq
+end
+
+"""
     new_gp_sep(X, Z, d, g)
 
 Create a new separable Gaussian Process model.
@@ -437,7 +489,11 @@ function new_gp_sep(X::Matrix{T}, Z::Vector{T}, d::Vector{<:Real}, g::Real) wher
     # Log determinant
     ldetK = _compute_logdet_chol(chol)
 
-    return GPsep{T}(copy(X), copy(Z), K, chol, Ki, KiZ, d_T, g_T, phi, ldetK)
+    # Cache per-dimension squared distances for gradient computation
+    dist_sq = Array{T,3}(undef, n, n, m)
+    _compute_per_dim_sq_distances!(dist_sq, X)
+
+    return GPsep{T}(copy(X), copy(Z), K, chol, Ki, KiZ, dist_sq, d_T, g_T, phi, ldetK)
 end
 
 """
@@ -590,11 +646,11 @@ function dllik_gp_sep(gp::GPsep{T}; dg::Bool=true, dd::Bool=true) where {T}
     end
 
     # Gradient w.r.t. each lengthscale d[k]
-    # Iterate over dimensions separately for better cache locality on Ki and K
+    # Uses cached per-dimension squared distances
     dlld = zeros(T, m)
     if dd
-        X = gp.X
         K = gp.K
+        dist_sq = gp.dist_sq
         phi_factor = T(0.5) * (n / gp.phi)
 
         for k in 1:m
@@ -607,8 +663,7 @@ function dllik_gp_sep(gp::GPsep{T}; dg::Bool=true, dd::Bool=true) where {T}
                 KiZ_j = KiZ[j]
                 for i in 1:n
                     if i != j
-                        diff = X[i, k] - X[j, k]
-                        dK_ij = K[i, j] * diff * diff * inv_dk_sq
+                        dK_ij = K[i, j] * dist_sq[i, j, k] * inv_dk_sq
                         tr_term += Ki[i, j] * dK_ij
                         quad_term += KiZ[i] * dK_ij * KiZ_j
                     end

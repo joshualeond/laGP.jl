@@ -1,12 +1,14 @@
 # Local Approximate GP functions
 
+using LinearAlgebra: mul!
+
 """
     _compute_squared_distances(X, Xref)
 
 Compute squared Euclidean distances from Xref to all rows of X.
 Returns a vector of length n where n is the number of rows in X.
 """
-function _compute_squared_distances(X::Matrix{T}, Xref::Vector{T}) where {T}
+function _compute_squared_distances(X::Matrix{T}, Xref::AbstractVector{T}) where {T}
     n = size(X, 1)
     m = length(Xref)
     distances = Vector{T}(undef, n)
@@ -61,7 +63,10 @@ function lagp(Xref::Vector{T}, start::Int, endpt::Int, X::Matrix{T}, Z::Vector{T
     local_indices = sorted_indices[1:start]
     available_indices = Set(sorted_indices[(start + 1):n])
 
-    # Build local design matrices
+    # Pre-allocate vector for available indices (max size is n - start)
+    avail_vec = Vector{Int}(undef, n - start)
+
+    # Build local design matrices (copy needed since GP stores references)
     X_local = X[local_indices, :]
     Z_local = Z[local_indices]
 
@@ -84,9 +89,15 @@ function lagp(Xref::Vector{T}, start::Int, endpt::Int, X::Matrix{T}, Z::Vector{T
             end
         else
             # Use acquisition function to select next point
-            # Build candidate matrix from available points
-            avail_vec = collect(available_indices)
-            Xcand = X[avail_vec, :]
+            # Copy available indices to pre-allocated vector
+            n_avail = length(available_indices)
+            idx = 0
+            for ai in available_indices
+                idx += 1
+                avail_vec[idx] = ai
+            end
+            avail_view = @view avail_vec[1:n_avail]
+            Xcand = X[avail_view, :]
 
             if method == :alc
                 acq_vals = alc_gp(gp, Xcand, Xref_mat)
@@ -96,12 +107,12 @@ function lagp(Xref::Vector{T}, start::Int, endpt::Int, X::Matrix{T}, Z::Vector{T
                 best_local_idx = argmin(acq_vals)  # MSPE: lower is better
             end
 
-            best_global_idx = avail_vec[best_local_idx]
+            best_global_idx = avail_view[best_local_idx]
             push!(local_indices, best_global_idx)
             delete!(available_indices, best_global_idx)
         end
 
-        # Update local design
+        # Update local design (copy needed since GP stores references)
         X_local = X[local_indices, :]
         Z_local = Z[local_indices]
 
@@ -178,7 +189,7 @@ function agp(X::Matrix{T}, Z::Vector{T}, XX::Matrix{T};
     if parallel && Threads.nthreads() > 1
         Threads.@threads for i in 1:n_test
             means[i], vars[i], dfs[i], mle_d_i, mle_g_i = _agp_single(
-                X, Z, XX[i, :], start, endpt,
+                X, Z, @view(XX[i, :]), start, endpt,
                 d_start, d_mle, d_min, d_max,
                 g_start, g_mle, g_min, g_max,
                 method, verb
@@ -193,7 +204,7 @@ function agp(X::Matrix{T}, Z::Vector{T}, XX::Matrix{T};
     else
         for i in 1:n_test
             means[i], vars[i], dfs[i], mle_d_i, mle_g_i = _agp_single(
-                X, Z, XX[i, :], start, endpt,
+                X, Z, @view(XX[i, :]), start, endpt,
                 d_start, d_mle, d_min, d_max,
                 g_start, g_mle, g_min, g_max,
                 method, verb
@@ -221,7 +232,7 @@ end
 
 Internal function to process a single test point for agp.
 """
-function _agp_single(X::Matrix{T}, Z::Vector{T}, Xref::Vector{T},
+function _agp_single(X::Matrix{T}, Z::Vector{T}, Xref::AbstractVector{T},
                      start::Int, endpt::Int,
                      d_start::T, d_mle::Bool, d_min::T, d_max::T,
                      g_start::T, g_mle::Bool, g_min::T, g_max::T,
@@ -237,15 +248,21 @@ function _agp_single(X::Matrix{T}, Z::Vector{T}, Xref::Vector{T},
     local_indices = sorted_indices[1:start]
     available_indices = Set(sorted_indices[(start + 1):n])
 
-    # Build local design matrices
+    # Pre-allocate vector for available indices
+    avail_vec = Vector{Int}(undef, n - start)
+
+    # Build local design matrices (copy needed since GP stores references)
     X_local = X[local_indices, :]
     Z_local = Z[local_indices]
 
     # Create local GP with initial parameters
     gp = new_gp(X_local, Z_local, d_start, g_start)
 
-    # Reference point as matrix for pred_gp
-    Xref_mat = reshape(Xref, 1, m)
+    # Reference point as matrix for pred_gp (collect needed for SubArray views)
+    Xref_mat = Matrix{T}(undef, 1, m)
+    @inbounds for j in 1:m
+        Xref_mat[1, j] = Xref[j]
+    end
 
     # Sequential design selection
     while length(local_indices) < endpt && !isempty(available_indices)
@@ -260,8 +277,15 @@ function _agp_single(X::Matrix{T}, Z::Vector{T}, Xref::Vector{T},
             end
         else
             # Use acquisition function to select next point
-            avail_vec = collect(available_indices)
-            Xcand = X[avail_vec, :]
+            # Copy available indices to pre-allocated vector
+            n_avail = length(available_indices)
+            idx = 0
+            for ai in available_indices
+                idx += 1
+                avail_vec[idx] = ai
+            end
+            avail_view = @view avail_vec[1:n_avail]
+            Xcand = X[avail_view, :]
 
             if method == :alc
                 acq_vals = alc_gp(gp, Xcand, Xref_mat)
@@ -271,12 +295,12 @@ function _agp_single(X::Matrix{T}, Z::Vector{T}, Xref::Vector{T},
                 best_local_idx = argmin(acq_vals)
             end
 
-            best_global_idx = avail_vec[best_local_idx]
+            best_global_idx = avail_view[best_local_idx]
             push!(local_indices, best_global_idx)
             delete!(available_indices, best_global_idx)
         end
 
-        # Update local design
+        # Update local design (copy needed since GP stores references)
         X_local = X[local_indices, :]
         Z_local = Z[local_indices]
 
@@ -346,7 +370,10 @@ function lagp_model(Xref::Vector{T}, start::Int, endpt::Int, X::Matrix{T}, Z::Ve
     local_indices = sorted_indices[1:start]
     available_indices = Set(sorted_indices[(start + 1):n])
 
-    # Build local design matrices
+    # Pre-allocate vector for available indices
+    avail_vec = Vector{Int}(undef, n - start)
+
+    # Build local design matrices (copy needed since GP stores references)
     X_local = X[local_indices, :]
     Z_local = Z[local_indices]
 
@@ -369,8 +396,15 @@ function lagp_model(Xref::Vector{T}, start::Int, endpt::Int, X::Matrix{T}, Z::Ve
             end
         else
             # Use acquisition function
-            avail_vec = collect(available_indices)
-            Xcand = X[avail_vec, :]
+            # Copy available indices to pre-allocated vector
+            n_avail = length(available_indices)
+            idx = 0
+            for ai in available_indices
+                idx += 1
+                avail_vec[idx] = ai
+            end
+            avail_view = @view avail_vec[1:n_avail]
+            Xcand = X[avail_view, :]
 
             if method == :alc
                 acq_vals = alc_gp_model(gp, Xcand, Xref_mat)
@@ -380,12 +414,12 @@ function lagp_model(Xref::Vector{T}, start::Int, endpt::Int, X::Matrix{T}, Z::Ve
                 best_local_idx = argmin(acq_vals)
             end
 
-            best_global_idx = avail_vec[best_local_idx]
+            best_global_idx = avail_view[best_local_idx]
             push!(local_indices, best_global_idx)
             delete!(available_indices, best_global_idx)
         end
 
-        # Update local design
+        # Update local design (copy needed since GP stores references)
         X_local = X[local_indices, :]
         Z_local = Z[local_indices]
 
@@ -460,7 +494,7 @@ function agp_model(X::Matrix{T}, Z::Vector{T}, XX::Matrix{T};
     if parallel && Threads.nthreads() > 1
         Threads.@threads for i in 1:n_test
             means[i], vars[i], dfs[i], mle_d_i, mle_g_i = _agp_model_single(
-                X, Z, XX[i, :], start, endpt,
+                X, Z, @view(XX[i, :]), start, endpt,
                 d_start, d_mle, d_min, d_max,
                 g_start, g_mle, g_min, g_max,
                 method, verb
@@ -475,7 +509,7 @@ function agp_model(X::Matrix{T}, Z::Vector{T}, XX::Matrix{T};
     else
         for i in 1:n_test
             means[i], vars[i], dfs[i], mle_d_i, mle_g_i = _agp_model_single(
-                X, Z, XX[i, :], start, endpt,
+                X, Z, @view(XX[i, :]), start, endpt,
                 d_start, d_mle, d_min, d_max,
                 g_start, g_mle, g_min, g_max,
                 method, verb
@@ -503,7 +537,7 @@ end
 
 Internal function to process a single test point for agp_model.
 """
-function _agp_model_single(X::Matrix{T}, Z::Vector{T}, Xref::Vector{T},
+function _agp_model_single(X::Matrix{T}, Z::Vector{T}, Xref::AbstractVector{T},
                            start::Int, endpt::Int,
                            d_start::T, d_mle::Bool, d_min::T, d_max::T,
                            g_start::T, g_mle::Bool, g_min::T, g_max::T,
@@ -519,15 +553,21 @@ function _agp_model_single(X::Matrix{T}, Z::Vector{T}, Xref::Vector{T},
     local_indices = sorted_indices[1:start]
     available_indices = Set(sorted_indices[(start + 1):n])
 
-    # Build local design matrices
+    # Pre-allocate vector for available indices
+    avail_vec = Vector{Int}(undef, n - start)
+
+    # Build local design matrices (copy needed since GP stores references)
     X_local = X[local_indices, :]
     Z_local = Z[local_indices]
 
     # Create local GPModel
     gp = new_gp_model(X_local, Z_local, d_start, g_start)
 
-    # Reference point as matrix
-    Xref_mat = reshape(Xref, 1, m)
+    # Reference point as matrix (collect needed for SubArray views)
+    Xref_mat = Matrix{T}(undef, 1, m)
+    @inbounds for j in 1:m
+        Xref_mat[1, j] = Xref[j]
+    end
 
     # Sequential design selection
     while length(local_indices) < endpt && !isempty(available_indices)
@@ -540,8 +580,15 @@ function _agp_model_single(X::Matrix{T}, Z::Vector{T}, Xref::Vector{T},
                 end
             end
         else
-            avail_vec = collect(available_indices)
-            Xcand = X[avail_vec, :]
+            # Copy available indices to pre-allocated vector
+            n_avail = length(available_indices)
+            idx = 0
+            for ai in available_indices
+                idx += 1
+                avail_vec[idx] = ai
+            end
+            avail_view = @view avail_vec[1:n_avail]
+            Xcand = X[avail_view, :]
 
             if method == :alc
                 acq_vals = alc_gp_model(gp, Xcand, Xref_mat)
@@ -551,12 +598,12 @@ function _agp_model_single(X::Matrix{T}, Z::Vector{T}, Xref::Vector{T},
                 best_local_idx = argmin(acq_vals)
             end
 
-            best_global_idx = avail_vec[best_local_idx]
+            best_global_idx = avail_view[best_local_idx]
             push!(local_indices, best_global_idx)
             delete!(available_indices, best_global_idx)
         end
 
-        # Update local design
+        # Update local design (copy needed since GP stores references)
         X_local = X[local_indices, :]
         Z_local = Z[local_indices]
 

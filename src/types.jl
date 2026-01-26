@@ -16,6 +16,7 @@ Gaussian Process model with isotropic squared-exponential kernel.
 - `chol::Cholesky{T}`: Cholesky factorization of K
 - `Ki::Matrix{T}`: K⁻¹ (cached inverse for gradient computation)
 - `KiZ::Vector{T}`: K \\ Z (precomputed for prediction)
+- `dist_sq::Matrix{T}`: cached pairwise squared distances for gradient computation
 - `d::T`: lengthscale parameter
 - `g::T`: nugget parameter
 - `phi::T`: Z' * Ki * Z (used for variance scaling)
@@ -28,6 +29,7 @@ mutable struct GP{T<:Real}
     chol::Cholesky{T,Matrix{T}}
     Ki::Matrix{T}
     KiZ::Vector{T}
+    dist_sq::Matrix{T}
     d::T
     g::T
     phi::T
@@ -81,6 +83,7 @@ input sensitivities.
 - `chol::Cholesky{T}`: Cholesky factorization of K
 - `Ki::Matrix{T}`: K⁻¹ (cached inverse for gradient computation)
 - `KiZ::Vector{T}`: K \\ Z (precomputed for prediction)
+- `dist_sq::Array{T,3}`: cached per-dimension squared distances (n x n x m)
 - `d::Vector{T}`: lengthscale parameters (m elements, one per dimension)
 - `g::T`: nugget parameter
 - `phi::T`: Z' * Ki * Z (used for variance scaling)
@@ -93,6 +96,7 @@ mutable struct GPsep{T<:Real}
     chol::Cholesky{T,Matrix{T}}
     Ki::Matrix{T}
     KiZ::Vector{T}
+    dist_sq::Array{T,3}
     d::Vector{T}
     g::T
     phi::T

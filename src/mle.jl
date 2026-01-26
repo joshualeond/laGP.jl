@@ -260,21 +260,28 @@ function darg(X::Matrix{T}; d::Union{Nothing,Real}=nothing,
               ab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
     n = size(X, 1)
 
-    # Compute pairwise squared Euclidean distances
-    distances = T[]
-    for i in 1:n
+    # Pre-allocate array for pairwise squared Euclidean distances
+    n_pairs = div(n * (n - 1), 2)
+    distances = Vector{T}(undef, n_pairs)
+    idx = 0
+    n_nonzero = 0
+    @inbounds for i in 1:n
         for j in (i + 1):n
             dist_sq = zero(T)
             for k in axes(X, 2)
                 diff = X[i, k] - X[j, k]
                 dist_sq += diff * diff
             end
+            idx += 1
             if dist_sq > 0
-                push!(distances, dist_sq)
+                n_nonzero += 1
+                distances[n_nonzero] = dist_sq
             end
         end
     end
 
+    # Resize to only include non-zero distances and sort
+    resize!(distances, n_nonzero)
     sort!(distances)
 
     # Compute quantiles using R's type 7 method
@@ -532,10 +539,11 @@ function darg_sep(X::Matrix{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
                   ab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
     n, m = size(X)
 
-    # Compute TOTAL pairwise squared Euclidean distances (like isotropic darg)
-    # This gives the same starting point for all dimensions
-    distances = T[]
-    for i in 1:n
+    # Pre-allocate array for TOTAL pairwise squared Euclidean distances
+    n_pairs = div(n * (n - 1), 2)
+    distances = Vector{T}(undef, n_pairs)
+    n_nonzero = 0
+    @inbounds for i in 1:n
         for j in (i + 1):n
             dist_sq = zero(T)
             for k in 1:m
@@ -543,11 +551,14 @@ function darg_sep(X::Matrix{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
                 dist_sq += diff * diff
             end
             if dist_sq > 0
-                push!(distances, dist_sq)
+                n_nonzero += 1
+                distances[n_nonzero] = dist_sq
             end
         end
     end
 
+    # Resize to only include non-zero distances and sort
+    resize!(distances, n_nonzero)
     sort!(distances)
 
     # Compute quantiles using R's type 7 method
@@ -620,8 +631,13 @@ function neg_llik_ad(params::Vector{T}, X::Matrix{T}, Z::Vector{T}; separable::B
     # Compute phi = Z' * Ki * Z
     phi = dot(Z, KiZ)
 
-    # Log determinant
-    ldetK = 2 * sum(log.(diag(chol.L)))
+    # Log determinant (allocation-free)
+    ldetK_half = zero(T)
+    L = chol.L
+    @inbounds for i in axes(L, 1)
+        ldetK_half += log(L[i, i])
+    end
+    ldetK = 2 * ldetK_half
 
     # Negative log-likelihood
     return T(0.5) * (n * log(T(0.5) * phi) + ldetK)
