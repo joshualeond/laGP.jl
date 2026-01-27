@@ -9,7 +9,7 @@ laGP.jl is a Julia implementation of Local Approximate Gaussian Process (laGP) r
 ### Key Features
 
 - **Scalable Predictions**: Handle datasets with thousands of observations by building local GP models
-- **Dual Implementation**: Choose between legacy direct matrix computations or AbstractGPs.jl backend
+- **AbstractGPs.jl Backend**: Built on the JuliaGaussianProcesses ecosystem for robust GP computations
 - **Isotropic & Separable Kernels**: Single lengthscale or per-dimension ARD lengthscales
 - **Acquisition Functions**: ALC (Active Learning Cohn) and MSPE for intelligent point selection
 - **MLE with Priors**: Maximum likelihood estimation with Inverse-Gamma priors (MAP)
@@ -55,17 +55,6 @@ pred = pred_gp(gp, X_test)
 println("Predictions: ", pred.mean)
 println("Variances: ", pred.s2)
 ```
-
-## Package Structure
-
-The package provides two parallel implementations:
-
-| Type | Description | Functions |
-|------|-------------|-----------|
-| `GP`, `GPsep` | Legacy types with direct matrix computations | `new_gp`, `pred_gp`, `llik_gp`, etc. |
-| `GPModel`, `GPModelSep` | AbstractGPs.jl backend | `new_gp_model`, `pred_gp_model`, etc. |
-
-Both share the same API pattern and produce equivalent results.
 
 ## Design Matrix Convention
 

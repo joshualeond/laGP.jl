@@ -2,20 +2,11 @@
 
 ## Types
 
-### Legacy Types
-
 ```@docs
 GP
 GPsep
 GPPrediction
 GPPredictionFull
-```
-
-### AbstractGPs-backed Types
-
-```@docs
-GPModel
-GPModelSep
 ```
 
 ## Core GP Functions (Isotropic)
@@ -38,26 +29,6 @@ dllik_gp_sep
 update_gp_sep!
 ```
 
-## Core GP Functions (AbstractGPs-backed Isotropic)
-
-```@docs
-new_gp_model
-pred_gp_model
-llik_gp_model
-dllik_gp_model
-update_gp_model!
-```
-
-## Core GP Functions (AbstractGPs-backed Separable)
-
-```@docs
-new_gp_model_sep
-pred_gp_model_sep
-llik_gp_model_sep
-dllik_gp_model_sep
-update_gp_model_sep!
-```
-
 ## MLE Functions (Isotropic)
 
 ```@docs
@@ -75,14 +46,6 @@ jmle_gp_sep
 darg_sep
 ```
 
-## MLE Functions (AbstractGPs-backed)
-
-```@docs
-mle_gp_model
-jmle_gp_model
-jmle_gp_model_sep
-```
-
 ## AD-based Gradient Functions
 
 ```@docs
@@ -95,8 +58,6 @@ dllik_ad
 ```@docs
 alc_gp
 mspe_gp
-alc_gp_model
-mspe_gp_model
 ```
 
 ## Local GP Functions
@@ -104,8 +65,6 @@ mspe_gp_model
 ```@docs
 lagp
 agp
-lagp_model
-agp_model
 ```
 
 ## Plotting Functions

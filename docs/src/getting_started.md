@@ -179,22 +179,6 @@ result_mspe = agp(X_train, Z_train, X_test; method=:mspe, ...)
 result_nn = agp(X_train, Z_train, X_test; method=:nn, ...)
 ```
 
-## Using AbstractGPs Backend
-
-The package provides AbstractGPs-backed implementations:
-
-```julia
-# Create GP using AbstractGPs backend
-gp_model = new_gp_model(X, Z, d, g)
-
-# All operations have matching functions
-pred = pred_gp_model(gp_model, X_test)
-llik = llik_gp_model(gp_model)
-jmle_gp_model(gp_model; drange=..., grange=...)
-```
-
-These produce equivalent results but leverage the JuliaGaussianProcesses ecosystem.
-
 ## Next Steps
 
 - [Theory](theory.md): Mathematical background on GP kernels and acquisition functions
