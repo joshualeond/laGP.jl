@@ -24,18 +24,18 @@ using laGP
 
 ## Architecture
 
-### Dual Implementation Pattern
+### GP Types
 
-The codebase provides two parallel implementations:
+The codebase provides two GP model types backed by AbstractGPs.jl:
 
-1. **Legacy types** (`GP`, `GPsep`) - Direct matrix computations, used for validated R compatibility
-2. **AbstractGPs-backed types** (`GPModel`, `GPModelSep`) - Uses JuliaGaussianProcesses ecosystem
+- **`GP`** - Isotropic GP with single lengthscale for all dimensions
+- **`GPsep`** - Separable (ARD) GP with per-dimension lengthscales
 
 Both share the same API pattern: `new_gp*`, `pred_gp*`, `llik_gp*`, `dllik_gp*`, `update_gp*!`
 
 ### Core Modules
 
-- **`types.jl`** - Type definitions for GP models (both legacy and AbstractGPs-backed)
+- **`types.jl`** - Type definitions for GP models
 - **`gp.jl`** - Core GP operations: covariance computation, prediction, likelihood, gradients
 - **`mle.jl`** - Maximum likelihood estimation using Optim.jl with Inverse-Gamma priors
 - **`acquisition.jl`** - ALC (Active Learning Cohn) and MSPE acquisition functions
@@ -55,8 +55,8 @@ All design matrices use rows as observations: `X` is `n x m` where `n` is number
 
 ### Isotropic vs Separable
 
-- **Isotropic** (`GP`, `GPModel`): Single lengthscale `d::Real` for all dimensions
-- **Separable** (`GPsep`, `GPModelSep`): Per-dimension lengthscales `d::Vector` (ARD)
+- **Isotropic** (`GP`): Single lengthscale `d::Real` for all dimensions
+- **Separable** (`GPsep`): Per-dimension lengthscales `d::Vector` (ARD)
 
 ### Concentrated Likelihood
 

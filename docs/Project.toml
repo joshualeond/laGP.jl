@@ -4,7 +4,7 @@ LiveServer = "16fef848-5104-11e9-1b77-fb7a48bbb589"
 laGP = "895baa0a-b668-4fc8-b1fe-ed27223c4cb2"
 
 [sources]
-laGP = {path = "/Users/joshualeond/Documents/laGP.jl"}
+laGP = {path = ".."}
 
 [compat]
 Documenter = "1"

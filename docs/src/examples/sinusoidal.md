@@ -7,7 +7,7 @@ This example demonstrates GP posterior sampling using the full covariance matrix
 We will:
 1. Fit an isotropic GP to sparse sinusoidal data
 2. Use `pred_gp(lite=false)` to get the full posterior covariance
-3. Draw posterior samples from the GP
+3. Draw posterior samples from the GP using the Student-t distribution
 4. Visualize the posterior uncertainty
 
 ## Setup
@@ -15,6 +15,7 @@ We will:
 ```julia
 using laGP
 using Distributions
+using PDMats
 using LinearAlgebra
 using Random
 
@@ -27,7 +28,7 @@ Create sparse observations from sin(x):
 
 ```julia
 # Sparse training points over [0, 2π]
-X_train = reshape([0.5, 1.5, 2.5, 3.5, 5.0, 6.0], :, 1)
+X_train = reshape(collect(range(0, 2π, length=6)), :, 1)
 Y_train = sin.(X_train[:, 1])
 
 println("Training data:")
@@ -60,7 +61,7 @@ Get the full covariance matrix for sampling:
 
 ```julia
 # Dense test grid
-xx = collect(range(-0.5, 2π + 0.5, length=200))
+xx = collect(range(-1, 2π + 1, length=499))
 XX = reshape(xx, :, 1)
 
 # Get full posterior (lite=false returns GPPredictionFull)
@@ -73,16 +74,22 @@ println("  Sigma size: ", size(pred_full.Sigma))
 
 ## Draw Posterior Samples
 
-```julia
-# Create multivariate normal distribution
-mvn = MvNormal(pred_full.mean, Symmetric(pred_full.Sigma))
+The laGP package uses a **concentrated (profile) likelihood** to estimate the variance parameter τ². This introduces additional uncertainty that should be captured using a **Student-t distribution** rather than a Normal distribution:
 
-# Draw samples
-n_samples = 50
-samples = rand(mvn, n_samples)
+```julia
+# Draw posterior samples using MvTDist (Student-t)
+# This mirrors R's rmvt and correctly accounts for uncertainty in τ² estimation
+mvt = MvTDist(pred_full.df, pred_full.mean, PDMat(Symmetric(pred_full.Sigma)))
+
+n_samples = 100
+samples = rand(mvt, n_samples)
 
 println("Posterior samples: ", size(samples))
 ```
+
+### Why Student-t?
+
+The concentrated likelihood marginalizes out τ² analytically, which means the posterior predictive distribution is Student-t with `df = n` (number of training observations). Using `MvNormal` would underestimate uncertainty, especially with small training sets.
 
 ## Visualization (with CairoMakie)
 
@@ -93,7 +100,7 @@ fig = Figure(size=(700, 500))
 ax = Axis(fig[1, 1],
     xlabel="x",
     ylabel="Y(x) | θ̂",
-    title="GP Posterior Samples"
+    title="Simple Sinusoidal Example: GP Posterior Samples"
 )
 
 # Draw posterior samples (gray, semi-transparent)
@@ -111,7 +118,7 @@ lines!(ax, xx, sin.(xx), color=:green, linewidth=1.5, linestyle=:dash, label="si
 scatter!(ax, vec(X_train), Y_train, color=:black, markersize=12, label="Training data")
 
 axislegend(ax, position=:lb)
-xlims!(ax, -0.5, 2π + 0.5)
+xlims!(ax, -1, 2π + 1)
 ylims!(ax, -2.0, 2.0)
 
 fig
@@ -141,7 +148,7 @@ Each sample represents a plausible function consistent with:
 
 1. **Nugget size**: A very small nugget (1e-6) gives near-interpolation. Increase for noisy data.
 2. **Memory**: Full covariance requires O(n²) storage. For large test sets, use `lite=true`.
-3. **Numerical stability**: The covariance matrix may need symmetrization before sampling.
+3. **Student-t vs Normal**: Always use `MvTDist` for posterior samples when using concentrated likelihood. The degrees of freedom `df = n` (training set size).
 
 ## Credible Intervals
 

@@ -8,6 +8,7 @@
 
 using laGP
 using Distributions
+using PDMats
 using LinearAlgebra
 using Random
 using CairoMakie
@@ -17,7 +18,8 @@ using CairoMakie
 # ============================================================================
 
 # Sparse training points from sin(x) over [0, 2π]
-X_train = reshape([0.5, 1.5, 2.5, 3.5, 5.0, 6.0], :, 1)
+# Match R's seq(0, 2*pi, length=6)
+X_train = reshape(collect(range(0, 2π, length=6)), :, 1)
 Y_train = sin.(X_train[:, 1])
 
 println("Training data:")
@@ -48,8 +50,8 @@ println("  log-likelihood = ", llik_gp(gp))
 # Part 3: Posterior Prediction with Full Covariance
 # ============================================================================
 
-# Dense test grid
-xx = collect(range(-0.5, 2π + 0.5, length=200))
+# Dense test grid - match R's seq(-1, 2*pi+1, length=499)
+xx = collect(range(-1, 2π + 1, length=499))
 XX = reshape(xx, :, 1)
 
 # Get full posterior (lite=false returns GPPredictionFull with covariance matrix)
@@ -63,11 +65,13 @@ println("  Sigma size: ", size(pred_full.Sigma))
 # Part 4: Draw Posterior Samples
 # ============================================================================
 
-# Draw posterior samples using MvNormal (mirrors R's rmvnorm)
+# Draw posterior samples using MvTDist (mirrors R's rmvt)
+# Student-t is correct because laGP uses concentrated likelihood to estimate τ²,
+# introducing additional uncertainty captured by t-distribution with df = n
 Random.seed!(42)
-n_samples = 50
-mvn = MvNormal(pred_full.mean, Symmetric(pred_full.Sigma))
-samples = rand(mvn, n_samples)
+n_samples = 100  # Match R's 100 samples
+mvt = MvTDist(pred_full.df, pred_full.mean, PDMat(Symmetric(pred_full.Sigma)))
+samples = rand(mvt, n_samples)
 
 println("\nPosterior samples: ", size(samples))
 
@@ -98,8 +102,8 @@ scatter!(ax, vec(X_train), Y_train, color=:black, markersize=12, label="Training
 # Add legend
 axislegend(ax, position=:lb)
 
-# Set axis limits
-xlims!(ax, -0.5, 2π + 0.5)
+# Set axis limits to match new test range
+xlims!(ax, -1, 2π + 1)
 ylims!(ax, -2.0, 2.0)
 
 # Save figure
