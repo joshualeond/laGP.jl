@@ -52,7 +52,7 @@ end
 """
     constraint1(X)
 
-First constraint function (feasible when c1 ≤ 0).
+First constraint function (feasible when c1 <= 0).
 """
 function constraint1(X::Matrix)
     return 1.5 .- X[:, 1] .- 2 .* X[:, 2] .- 0.5 .* sin.(2π .* (X[:, 1].^2 .- 2 .* X[:, 2]))
@@ -61,7 +61,7 @@ end
 """
     constraint2(X)
 
-Second constraint function (feasible when c2 ≤ 0).
+Second constraint function (feasible when c2 <= 0).
 """
 function constraint2(X::Matrix)
     return sum(X.^2, dims=2)[:] .- 1.5
@@ -105,6 +105,25 @@ let idx = 1
 end
 
 println("Test grid: $(n_test_side) x $(n_test_side) = $(n_test_side^2) points")
+
+# ============================================================================
+# True Function Visualization (ground truth)
+# ============================================================================
+
+println("\nCreating true function plot...")
+true_vals = f2d(4.0 .* (X_test .- 0.5))
+Z_true_grid = reshape(true_vals, n_test_side, n_test_side)
+
+fig0 = Figure(size=(600, 500))
+ax0 = Axis(fig0[1, 1], xlabel="x₁", ylabel="x₂", title="True Function f2d",
+           aspect=DataAspect())
+hm0 = heatmap!(ax0, collect(x_test), collect(x_test), Z_true_grid, colormap=:viridis)
+contour!(ax0, collect(x_test), collect(x_test), Z_true_grid, color=:white, linewidth=0.5, levels=10)
+scatter!(ax0, X_train[:, 1], X_train[:, 2], color=:red, markersize=4,
+         strokewidth=0.5, strokecolor=:white, alpha=0.7)
+Colorbar(fig0[1, 2], hm0, label="f(x)")
+save(joinpath(OUTPUT_DIR, "true_function.png"), fig0)
+println("Saved: true_function.png")
 
 # ============================================================================
 # Full GP Model (for comparison)
@@ -162,8 +181,7 @@ result_nn = agp(X_train, Z_train, X_test;
 )
 println("Done.")
 
-# Compare prediction errors
-true_vals = f2d(4.0 .* (X_test .- 0.5))
+# Compare prediction errors (true_vals already computed above)
 rmse_full = sqrt(mean((pred_full.mean .- true_vals).^2))
 rmse_alc = sqrt(mean((result_alc.mean .- true_vals).^2))
 rmse_nn = sqrt(mean((result_nn.mean .- true_vals).^2))
@@ -181,21 +199,69 @@ println("\n" * "="^60)
 println("Creating Visualizations")
 println("="^60)
 
-# 1. GP Surface Plot
+# 1. GP Surface Plot (mean prediction over 2D grid)
 println("Creating GP surface plot...")
-fig1 = plot_gp_surface(gp, (0.0, 1.0), (0.0, 1.0); resolution=100)
+resolution = 100
+x1_grid = range(0.0, 1.0, length=resolution)
+x2_grid = range(0.0, 1.0, length=resolution)
+XX_grid = Matrix{Float64}(undef, resolution^2, 2)
+let idx = 1
+    for j in 1:resolution
+        for i in 1:resolution
+            XX_grid[idx, 1] = x1_grid[i]
+            XX_grid[idx, 2] = x2_grid[j]
+            idx += 1
+        end
+    end
+end
+pred_grid = pred_gp(gp, XX_grid; lite=true)
+Z_mean_grid = reshape(pred_grid.mean, resolution, resolution)
+
+fig1 = Figure(size=(600, 500))
+ax1 = Axis(fig1[1, 1], xlabel="x₁", ylabel="x₂", title="GP Mean Prediction",
+           aspect=DataAspect())
+hm1 = heatmap!(ax1, collect(x1_grid), collect(x2_grid), Z_mean_grid, colormap=:viridis)
+contour!(ax1, collect(x1_grid), collect(x2_grid), Z_mean_grid, color=:white, linewidth=0.5, levels=10)
+scatter!(ax1, X_train[:, 1], X_train[:, 2], color=:red, markersize=4,
+         strokewidth=0.5, strokecolor=:white, alpha=0.7)
+Colorbar(fig1[1, 2], hm1, label="Mean")
 save(joinpath(OUTPUT_DIR, "gp_surface.png"), fig1)
 println("Saved: gp_surface.png")
 
 # 2. GP Variance Plot
 println("Creating GP variance plot...")
-fig2 = plot_gp_variance(gp, (0.0, 1.0), (0.0, 1.0); resolution=100)
+Z_var_grid = reshape(pred_grid.s2, resolution, resolution)
+
+fig2 = Figure(size=(600, 500))
+ax2 = Axis(fig2[1, 1], xlabel="x₁", ylabel="x₂", title="GP Prediction Variance",
+           aspect=DataAspect())
+hm2 = heatmap!(ax2, collect(x1_grid), collect(x2_grid), Z_var_grid, colormap=:plasma)
+contour!(ax2, collect(x1_grid), collect(x2_grid), Z_var_grid, color=:white, linewidth=0.5, levels=10)
+scatter!(ax2, X_train[:, 1], X_train[:, 2], color=:cyan, markersize=4,
+         strokewidth=0.5, strokecolor=:white, alpha=0.7)
+Colorbar(fig2[1, 2], hm2, label="Variance")
 save(joinpath(OUTPUT_DIR, "gp_variance.png"), fig2)
 println("Saved: gp_variance.png")
 
-# 3. aGP Predictions
+# 3. aGP Predictions (mean and variance side by side)
 println("Creating aGP predictions plot...")
-fig3 = plot_agp_predictions(X_train, Z_train, X_test, result_alc)
+Z_alc_mean_grid = reshape(result_alc.mean, n_test_side, n_test_side)
+Z_alc_var_grid = reshape(result_alc.var, n_test_side, n_test_side)
+
+fig3 = Figure(size=(1000, 450))
+ax3a = Axis(fig3[1, 1], xlabel="x₁", ylabel="x₂", title="aGP Mean (ALC)",
+            aspect=DataAspect())
+hm3a = heatmap!(ax3a, collect(x_test), collect(x_test), Z_alc_mean_grid, colormap=:viridis)
+contour!(ax3a, collect(x_test), collect(x_test), Z_alc_mean_grid, color=:white, linewidth=0.5, levels=10)
+scatter!(ax3a, X_train[:, 1], X_train[:, 2], color=:red, markersize=3, alpha=0.5)
+Colorbar(fig3[1, 2], hm3a, label="Mean")
+
+ax3b = Axis(fig3[1, 3], xlabel="x₁", ylabel="x₂", title="aGP Variance (ALC)",
+            aspect=DataAspect())
+hm3b = heatmap!(ax3b, collect(x_test), collect(x_test), Z_alc_var_grid, colormap=:plasma)
+contour!(ax3b, collect(x_test), collect(x_test), Z_alc_var_grid, color=:white, linewidth=0.5, levels=10)
+scatter!(ax3b, X_train[:, 1], X_train[:, 2], color=:cyan, markersize=3, alpha=0.5)
+Colorbar(fig3[1, 4], hm3b, label="Variance")
 save(joinpath(OUTPUT_DIR, "agp_predictions.png"), fig3)
 println("Saved: agp_predictions.png")
 
@@ -204,24 +270,63 @@ println("Creating local design selection plot...")
 Xref = [0.5, 0.5]
 lagp_result = lagp(Xref, 6, 30, X_train, Z_train;
     d=gp.d, g=gp.g, method=:alc)
-fig4 = plot_local_design(X_train, Z_train, Xref, lagp_result.indices)
+
+fig4 = Figure(size=(600, 500))
+ax4 = Axis(fig4[1, 1], xlabel="x₁", ylabel="x₂", title="Local Design Selection",
+           aspect=DataAspect())
+# Plot all training points (gray)
+scatter!(ax4, X_train[:, 1], X_train[:, 2], color=:gray, markersize=6, alpha=0.4,
+         label="All training points")
+# Highlight selected local design points (blue)
+local_idx = lagp_result.indices
+scatter!(ax4, X_train[local_idx, 1], X_train[local_idx, 2], color=:blue, markersize=10,
+         strokewidth=1, strokecolor=:black, label="Local design ($(length(local_idx)) pts)")
+# Mark reference point (red star)
+scatter!(ax4, [Xref[1]], [Xref[2]], color=:red, markersize=15, marker=:star5,
+         strokewidth=1, strokecolor=:black, label="Reference point")
+axislegend(ax4, position=:lt)
 save(joinpath(OUTPUT_DIR, "local_design.png"), fig4)
 println("Saved: local_design.png")
 
 # 5. Constrained Optimization Problem Visualization
 println("Creating constrained problem visualization...")
 
-# Function wrappers for plotting (operating on [0,1]^2 domain)
-f_plot(X) = f2d(4.0 .* (X .- 0.5))
-c1_plot(X) = constraint1(X)
-c2_plot(X) = constraint2(X)
+# Create fine grid for constraint visualization
+n_constraint = 150
+x_constraint = range(0.0, 1.0, length=n_constraint)
+XX_constraint = Matrix{Float64}(undef, n_constraint^2, 2)
+let idx = 1
+    for j in 1:n_constraint
+        for i in 1:n_constraint
+            XX_constraint[idx, 1] = x_constraint[i]
+            XX_constraint[idx, 2] = x_constraint[j]
+            idx += 1
+        end
+    end
+end
 
-fig5 = contour_with_constraints(f_plot, [c1_plot, c2_plot], (0.0, 1.0), (0.0, 1.0);
-                                 resolution=150, n_levels=15)
-# Add training points
-ax = fig5.content[1]
-scatter!(ax, X_train[:, 1], X_train[:, 2], color=:blue, markersize=4,
+# Evaluate objective and constraints
+f_vals = f2d(4.0 .* (XX_constraint .- 0.5))
+c1_vals = constraint1(XX_constraint)
+c2_vals = constraint2(XX_constraint)
+
+Z_f = reshape(f_vals, n_constraint, n_constraint)
+Z_c1 = reshape(c1_vals, n_constraint, n_constraint)
+Z_c2 = reshape(c2_vals, n_constraint, n_constraint)
+
+fig5 = Figure(size=(600, 500))
+ax5 = Axis(fig5[1, 1], xlabel="x₁", ylabel="x₂", title="Constrained Problem",
+           aspect=DataAspect())
+# Objective function contours
+hm5 = heatmap!(ax5, collect(x_constraint), collect(x_constraint), Z_f, colormap=:viridis)
+contour!(ax5, collect(x_constraint), collect(x_constraint), Z_f, color=:white, linewidth=0.5, levels=15)
+# Constraint boundaries (c1 = 0 and c2 = 0)
+contour!(ax5, collect(x_constraint), collect(x_constraint), Z_c1, color=:red, linewidth=2, levels=[0.0])
+contour!(ax5, collect(x_constraint), collect(x_constraint), Z_c2, color=:orange, linewidth=2, levels=[0.0])
+# Training points
+scatter!(ax5, X_train[:, 1], X_train[:, 2], color=:blue, markersize=4,
          strokewidth=0.5, strokecolor=:white, alpha=0.7)
+Colorbar(fig5[1, 2], hm5, label="Objective")
 save(joinpath(OUTPUT_DIR, "constrained_problem.png"), fig5)
 println("Saved: constrained_problem.png")
 
@@ -234,22 +339,22 @@ Z_full_grid = reshape(pred_full.mean, n_test_side, n_test_side)
 Z_alc_grid = reshape(result_alc.mean, n_test_side, n_test_side)
 Z_nn_grid = reshape(result_nn.mean, n_test_side, n_test_side)
 
-ax1 = Axis(fig6[1, 1], xlabel="x₁", ylabel="x₂", title="Full GP",
+ax6a = Axis(fig6[1, 1], xlabel="x₁", ylabel="x₂", title="Full GP",
            aspect=DataAspect())
-hm1 = heatmap!(ax1, collect(x_test), collect(x_test), Z_full_grid, colormap=:viridis)
-contour!(ax1, collect(x_test), collect(x_test), Z_full_grid, color=:white, linewidth=0.5)
+hm6a = heatmap!(ax6a, collect(x_test), collect(x_test), Z_full_grid, colormap=:viridis)
+contour!(ax6a, collect(x_test), collect(x_test), Z_full_grid, color=:white, linewidth=0.5)
 
-ax2 = Axis(fig6[1, 2], xlabel="x₁", ylabel="x₂", title="aGP (ALC)",
+ax6b = Axis(fig6[1, 2], xlabel="x₁", ylabel="x₂", title="aGP (ALC)",
            aspect=DataAspect())
-hm2 = heatmap!(ax2, collect(x_test), collect(x_test), Z_alc_grid, colormap=:viridis)
-contour!(ax2, collect(x_test), collect(x_test), Z_alc_grid, color=:white, linewidth=0.5)
+hm6b = heatmap!(ax6b, collect(x_test), collect(x_test), Z_alc_grid, colormap=:viridis)
+contour!(ax6b, collect(x_test), collect(x_test), Z_alc_grid, color=:white, linewidth=0.5)
 
-ax3 = Axis(fig6[1, 3], xlabel="x₁", ylabel="x₂", title="aGP (NN)",
+ax6c = Axis(fig6[1, 3], xlabel="x₁", ylabel="x₂", title="aGP (NN)",
            aspect=DataAspect())
-hm3 = heatmap!(ax3, collect(x_test), collect(x_test), Z_nn_grid, colormap=:viridis)
-contour!(ax3, collect(x_test), collect(x_test), Z_nn_grid, color=:white, linewidth=0.5)
+hm6c = heatmap!(ax6c, collect(x_test), collect(x_test), Z_nn_grid, colormap=:viridis)
+contour!(ax6c, collect(x_test), collect(x_test), Z_nn_grid, color=:white, linewidth=0.5)
 
-Colorbar(fig6[1, 4], hm1, label="Prediction")
+Colorbar(fig6[1, 4], hm6a, label="Prediction")
 
 save(joinpath(OUTPUT_DIR, "comparison.png"), fig6)
 println("Saved: comparison.png")
@@ -258,6 +363,7 @@ println("\n" * "="^60)
 println("Demo Complete!")
 println("="^60)
 println("\nGenerated files:")
+println("  - true_function.png: True function (ground truth)")
 println("  - gp_surface.png: Full GP mean prediction")
 println("  - gp_variance.png: Full GP prediction variance")
 println("  - agp_predictions.png: aGP mean and variance")

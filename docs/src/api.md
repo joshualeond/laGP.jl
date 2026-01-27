@@ -46,13 +46,6 @@ jmle_gp_sep
 darg_sep
 ```
 
-## AD-based Gradient Functions
-
-```@docs
-neg_llik_ad
-dllik_ad
-```
-
 ## Acquisition Functions
 
 ```@docs
@@ -65,16 +58,6 @@ mspe_gp
 ```@docs
 lagp
 agp
-```
-
-## Plotting Functions
-
-```@docs
-plot_gp_surface
-plot_gp_variance
-plot_local_design
-plot_agp_predictions
-contour_with_constraints
 ```
 
 ## Index
