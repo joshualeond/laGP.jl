@@ -155,12 +155,9 @@ function mle_gp(gp::GP{T}, param::Symbol; tmax::Real, tmin::Real=sqrt(eps(T))) w
 end
 
 """
-    jmle_gp(gp; drange, grange, maxit=100, verb=0, use_ad=false, dab=(3/2, nothing), gab=(3/2, nothing))
+    jmle_gp(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
 
 Joint MLE optimization of d and g for GP.
-
-Can use either Zygote AD gradients (use_ad=true) or manual gradients (use_ad=false).
-Manual gradients are ~60x faster than Zygote AD and are the default.
 
 # Arguments
 - `gp::GP`: Gaussian Process model (modified in-place)
@@ -168,7 +165,6 @@ Manual gradients are ~60x faster than Zygote AD and are the default.
 - `grange::Tuple`: (min, max) range for g
 - `maxit::Int`: maximum iterations
 - `verb::Int`: verbosity level
-- `use_ad::Bool`: use Zygote automatic differentiation for gradients (default: false for performance)
 - `dab::Tuple`: (shape, scale) for d prior
 - `gab::Tuple`: (shape, scale) for g prior
 
@@ -176,7 +172,7 @@ Manual gradients are ~60x faster than Zygote AD and are the default.
 - `NamedTuple`: (d=..., g=..., tot_its=..., msg=...)
 """
 function jmle_gp(gp::GP{T}; drange::Tuple{Real,Real}, grange::Tuple{Real,Real},
-                  maxit::Int=100, verb::Int=0, use_ad::Bool=false,
+                  maxit::Int=100, verb::Int=0,
                   dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
                   gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
     # Compute prior parameters
@@ -208,18 +204,10 @@ function jmle_gp(gp::GP{T}; drange::Tuple{Real,Real}, grange::Tuple{Real,Real},
         update_gp!(gp; d=d_new, g=g_new)
 
         if G !== nothing
-            if use_ad
-                # Use Zygote AD
-                params = T[d_new, g_new]
-                ad_grad = Zygote.gradient(p -> neg_llik_ad(p, gp.X, gp.Z; separable=false), params)[1]
-                G[1] = ad_grad[1] * d_new  # Chain rule for log transform
-                G[2] = ad_grad[2] * g_new
-            else
-                # Use manual gradients
-                grad = dllik_gp(gp)
-                G[1] = -grad.dlld * d_new
-                G[2] = -grad.dllg * g_new
-            end
+            # Use manual gradients
+            grad = dllik_gp(gp)
+            G[1] = -grad.dlld * d_new
+            G[2] = -grad.dllg * g_new
 
             # Add prior gradients
             G[1] += -dlog_invgamma(d_new, d_shape, d_scale) * d_new
@@ -421,11 +409,9 @@ function mle_gp_sep(gp::GPsep{T}, param::Symbol, dim::Int=1;
 end
 
 """
-    jmle_gp_sep(gp; drange, grange, maxit=100, verb=0, use_ad=false, dab=(3/2, nothing), gab=(3/2, nothing))
+    jmle_gp_sep(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
 
 Joint MLE optimization of lengthscales and nugget for GPsep.
-
-Manual gradients are ~60x faster than Zygote AD and are the default.
 
 # Arguments
 - `gp::GPsep`: Separable Gaussian Process model (modified in-place)
@@ -433,7 +419,6 @@ Manual gradients are ~60x faster than Zygote AD and are the default.
 - `grange::Tuple`: (min, max) range for g
 - `maxit::Int`: maximum iterations
 - `verb::Int`: verbosity level
-- `use_ad::Bool`: use Zygote automatic differentiation for gradients (default: false for performance)
 - `dab::Tuple`: (shape, scale) for d prior
 - `gab::Tuple`: (shape, scale) for g prior
 
@@ -441,7 +426,7 @@ Manual gradients are ~60x faster than Zygote AD and are the default.
 - `NamedTuple`: (d=..., g=..., tot_its=..., msg=...)
 """
 function jmle_gp_sep(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple{Real,Real}}},
-                      grange::Tuple{Real,Real}, maxit::Int=100, verb::Int=0, use_ad::Bool=false,
+                      grange::Tuple{Real,Real}, maxit::Int=100, verb::Int=0,
                       dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
                       gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
     m = length(gp.d)
@@ -486,18 +471,10 @@ function jmle_gp_sep(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple
         update_gp_sep!(gp; d=d_new, g=g_new)
 
         if G !== nothing
-            if use_ad
-                # Use Zygote AD
-                params = T[d_new..., g_new]
-                ad_grad = Zygote.gradient(p -> neg_llik_ad(p, gp.X, gp.Z; separable=true), params)[1]
-                G[1:m] .= ad_grad[1:m] .* d_new
-                G[m+1] = ad_grad[m+1] * g_new
-            else
-                # Use manual gradients
-                grad = dllik_gp_sep(gp)
-                G[1:m] .= -grad.dlld .* d_new
-                G[m+1] = -grad.dllg * g_new
-            end
+            # Use manual gradients
+            grad = dllik_gp_sep(gp)
+            G[1:m] .= -grad.dlld .* d_new
+            G[m+1] = -grad.dllg * g_new
 
             # Add prior gradients
             for k in 1:m
@@ -588,87 +565,6 @@ function darg_sep(X::Matrix{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
     end
 
     return (ranges=results, ab=ab)
-end
-
-# ============================================================================
-# Zygote-based Automatic Differentiation Gradients
-# ============================================================================
-
-"""
-    neg_llik_ad(params, X, Z; separable=false)
-
-Compute negative log-likelihood using a form suitable for Zygote AD.
-
-This function recomputes the likelihood from scratch given parameters,
-making it compatible with automatic differentiation. It avoids in-place
-mutations for Zygote compatibility.
-
-# Arguments
-- `params`: For isotropic: [d, g]; for separable: [d..., g]
-- `X::Matrix`: design matrix
-- `Z::Vector`: response values
-- `separable::Bool`: if true, params contains per-dimension lengthscales
-
-# Returns
-- Negative log-likelihood value
-"""
-function neg_llik_ad(params::Vector{T}, X::Matrix{T}, Z::Vector{T}; separable::Bool=false) where {T}
-    n = size(X, 1)
-    m = size(X, 2)
-
-    if separable
-        d = params[1:m]
-        g = params[m+1]
-        kernel = build_kernel_separable(d)
-    else
-        d = params[1]
-        g = params[2]
-        kernel = build_kernel_isotropic(d)
-    end
-
-    # Compute covariance matrix (without mutation for Zygote compatibility)
-    K_base = kernelmatrix(kernel, RowVecs(X))
-    # Add nugget using broadcasting instead of in-place mutation
-    K = K_base + g * I(n)
-
-    # Cholesky factorization
-    chol = cholesky(Symmetric(K))
-
-    # Compute KiZ
-    KiZ = chol \ Z
-
-    # Compute phi = Z' * Ki * Z
-    phi = dot(Z, KiZ)
-
-    # Log determinant (allocation-free)
-    ldetK_half = zero(T)
-    L = chol.L
-    @inbounds for i in axes(L, 1)
-        ldetK_half += log(L[i, i])
-    end
-    ldetK = 2 * ldetK_half
-
-    # Negative log-likelihood
-    return T(0.5) * (n * log(T(0.5) * phi) + ldetK)
-end
-
-"""
-    dllik_ad(params, X, Z; separable=false)
-
-Compute gradient of log-likelihood using Zygote automatic differentiation.
-
-# Arguments
-- `params`: For isotropic: [d, g]; for separable: [d..., g]
-- `X::Matrix`: design matrix
-- `Z::Vector`: response values
-- `separable::Bool`: if true, params contains per-dimension lengthscales
-
-# Returns
-- Gradient vector (same shape as params)
-"""
-function dllik_ad(params::Vector{T}, X::Matrix{T}, Z::Vector{T}; separable::Bool=false) where {T}
-    grad = Zygote.gradient(p -> neg_llik_ad(p, X, Z; separable=separable), params)[1]
-    return -grad  # Return gradient of log-likelihood (not negative)
 end
 
 # ============================================================================

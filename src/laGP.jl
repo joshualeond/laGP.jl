@@ -8,14 +8,10 @@ Port of the R laGP package by Robert Gramacy.
 module laGP
 
 using AbstractGPs
-using Distances
 using KernelFunctions
 using LinearAlgebra
-using NearestNeighbors
 using Optim
-using PDMats
 using Statistics
-using Zygote
 
 # Types
 export GP
@@ -52,10 +48,6 @@ export jmle_gp_sep
 export amle_gp_sep
 export darg_sep
 
-# AD-based gradient functions
-export neg_llik_ad
-export dllik_ad
-
 # Acquisition functions
 export alc_gp
 export mspe_gp
@@ -64,19 +56,11 @@ export mspe_gp
 export lagp
 export agp
 
-# Plotting utilities (stubs, implementations require CairoMakie)
-export plot_gp_surface
-export plot_gp_variance
-export plot_local_design
-export plot_agp_predictions
-export contour_with_constraints
-
 include("abstractgps_adapter.jl")
 include("types.jl")
 include("gp.jl")
 include("mle.jl")
 include("acquisition.jl")
 include("local_gp.jl")
-include("plotting.jl")
 
 end # module laGP
