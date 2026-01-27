@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Satellite Drag Modeling · laGP.jl</title><meta name="title" content="Satellite Drag Modeling · laGP.jl"/><meta property="og:title" content="Satellite Drag Modeling · laGP.jl"/><meta property="twitter:title" content="Satellite Drag Modeling · laGP.jl"/><meta name="description" content="Documentation for laGP.jl."/><meta property="og:description" content="Documentation for laGP.jl."/><meta property="twitter:description" content="Documentation for laGP.jl."/><meta property="og:url" content="https://joshualeond.github.io/laGP.jl/stable/examples/satellite/"/><meta property="twitter:url" content="https://joshualeond.github.io/laGP.jl/stable/examples/satellite/"/><link rel="canonical" href="https://joshualeond.github.io/laGP.jl/stable/examples/satellite/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">laGP.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../getting_started/">Getting Started</a></li><li><a class="tocitem" href="../../theory/">Theory</a></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../demo/">Local Approximate GP Demo</a></li><li><a class="tocitem" href="../sinusoidal/">Posterior Sampling</a></li><li><a class="tocitem" href="../surrogates/">Wing Weight Surrogate</a></li><li class="is-active"><a class="tocitem" href>Satellite Drag Modeling</a><ul class="internal"><li><a class="tocitem" href="#Overview"><span>Overview</span></a></li><li><a class="tocitem" href="#Background"><span>Background</span></a></li><li><a class="tocitem" href="#Setup"><span>Setup</span></a></li><li><a class="tocitem" href="#Load-Data"><span>Load Data</span></a></li><li><a class="tocitem" href="#Normalize-Data"><span>Normalize Data</span></a></li><li><a class="tocitem" href="#Fit-Separable-GPs"><span>Fit Separable GPs</span></a></li><li><a class="tocitem" href="#Atmospheric-Mixture"><span>Atmospheric Mixture</span></a></li><li><a class="tocitem" href="#Lengthscale-Analysis"><span>Lengthscale Analysis</span></a></li><li><a class="tocitem" href="#Main-Effects-(for-Helium)"><span>Main Effects (for Helium)</span></a></li><li><a class="tocitem" href="#Visualization-(with-CairoMakie)"><span>Visualization (with CairoMakie)</span></a></li><li><a class="tocitem" href="#Key-Findings"><span>Key Findings</span></a></li></ul></li></ul></li><li><a class="tocitem" href="../../api/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>Satellite Drag Modeling</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Satellite Drag Modeling</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/joshualeond/laGP.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/joshualeond/laGP.jl/blob/main/docs/src/examples/satellite.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Satellite-Drag-Modeling-Example"><a class="docs-heading-anchor" href="#Satellite-Drag-Modeling-Example">Satellite Drag Modeling Example</a><a id="Satellite-Drag-Modeling-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Satellite-Drag-Modeling-Example" title="Permalink"></a></h1><p>This example demonstrates GP surrogate modeling for GRACE satellite drag coefficients, based on Chapter 2 of &quot;Surrogates&quot; by Robert Gramacy.</p><h2 id="Overview"><a class="docs-heading-anchor" href="#Overview">Overview</a><a id="Overview-1"></a><a class="docs-heading-anchor-permalink" href="#Overview" title="Permalink"></a></h2><p>We will:</p><ol><li>Load GRACE satellite drag coefficient data</li><li>Fit separable GPs for multiple atmospheric species</li><li>Make predictions and compute RMSPE</li><li>Combine species predictions for atmospheric mixture</li></ol><h2 id="Background"><a class="docs-heading-anchor" href="#Background">Background</a><a id="Background-1"></a><a class="docs-heading-anchor-permalink" href="#Background" title="Permalink"></a></h2><p>The GRACE satellite mission requires accurate drag coefficient (Cd) predictions for orbit determination. The drag coefficient depends on:</p><ul><li>Velocity magnitude (Umag)</li><li>Surface temperature (Ts)</li><li>Atmospheric temperature (Ta)</li><li>Yaw and pitch angles (theta, phi)</li><li>Accommodation coefficients (alphan, sigmat)</li></ul><p>Data is available for 6 atmospheric species: He, O, O2, N, N2, H.</p><h2 id="Setup"><a class="docs-heading-anchor" href="#Setup">Setup</a><a id="Setup-1"></a><a class="docs-heading-anchor-permalink" href="#Setup" title="Permalink"></a></h2><pre><code class="language-julia hljs">using laGP
+using Downloads
+using DelimitedFiles
+using Random
+using Statistics: mean
+
+Random.seed!(42)
+
+# Variable names
+var_names = [&quot;Umag&quot;, &quot;Ts&quot;, &quot;Ta&quot;, &quot;theta&quot;, &quot;phi&quot;, &quot;alphan&quot;, &quot;sigmat&quot;]
+
+# Atmospheric species
+species_list = [:He, :O, :O2, :N, :N2, :H]
+
+# Molecular masses (g/mol)
+molecular_mass = Dict(
+    :He =&gt; 4.003, :O =&gt; 15.999, :O2 =&gt; 31.998,
+    :N =&gt; 14.007, :N2 =&gt; 28.014, :H =&gt; 1.008
+)</code></pre><h2 id="Load-Data"><a class="docs-heading-anchor" href="#Load-Data">Load Data</a><a id="Load-Data-1"></a><a class="docs-heading-anchor-permalink" href="#Load-Data" title="Permalink"></a></h2><p>Download data from the TPM repository:</p><pre><code class="language-julia hljs">function load_grace_data(species::Symbol, n::Int)
+    url = &quot;https://bitbucket.org/gramacylab/tpm/raw/master/data/GRACE/CD_GRACE_$(n)_$(species).csv&quot;
+    io = IOBuffer()
+    Downloads.download(url, io)
+    seekstart(io)
+    content = String(take!(io))
+
+    lines = split(content, &#39;\n&#39;)
+    data_rows = Float64[]
+    for line in lines[2:end]
+        if !isempty(strip(line))
+            values = parse.(Float64, split(line, &#39;,&#39;))
+            append!(data_rows, values)
+        end
+    end
+
+    n_cols = length(split(lines[1], &#39;,&#39;))
+    return reshape(data_rows, n_cols, :)&#39;
+end
+
+# Load training (n=1000) and test (n=100) data
+train_data = Dict(s =&gt; load_grace_data(s, 1000) for s in species_list)
+test_data = Dict(s =&gt; load_grace_data(s, 100) for s in species_list)
+
+println(&quot;Loaded data for $(length(species_list)) species&quot;)
+println(&quot;Training: 1000 points, Test: 100 points&quot;)</code></pre><h2 id="Normalize-Data"><a class="docs-heading-anchor" href="#Normalize-Data">Normalize Data</a><a id="Normalize-Data-1"></a><a class="docs-heading-anchor-permalink" href="#Normalize-Data" title="Permalink"></a></h2><pre><code class="language-julia hljs">function normalize_data(train, test)
+    X_train_raw = train[:, 1:7]
+    X_test_raw = test[:, 1:7]
+    Y_train = train[:, 8]
+    Y_test = test[:, 8]
+
+    # Global normalization
+    ranges = [(minimum(vcat(X_train_raw[:,j], X_test_raw[:,j])),
+               maximum(vcat(X_train_raw[:,j], X_test_raw[:,j]))) for j in 1:7]
+
+    X_train = similar(X_train_raw)
+    X_test = similar(X_test_raw)
+    for j in 1:7
+        X_train[:, j] = (X_train_raw[:, j] .- ranges[j][1]) ./ (ranges[j][2] - ranges[j][1])
+        X_test[:, j] = (X_test_raw[:, j] .- ranges[j][1]) ./ (ranges[j][2] - ranges[j][1])
+    end
+
+    return X_train, X_test, Y_train, Y_test
+end
+
+normalized = Dict(s =&gt; normalize_data(train_data[s], test_data[s]) for s in species_list)</code></pre><h2 id="Fit-Separable-GPs"><a class="docs-heading-anchor" href="#Fit-Separable-GPs">Fit Separable GPs</a><a id="Fit-Separable-GPs-1"></a><a class="docs-heading-anchor-permalink" href="#Fit-Separable-GPs" title="Permalink"></a></h2><pre><code class="language-julia hljs">gp_models = Dict{Symbol, GPsep{Float64}}()
+predictions = Dict{Symbol, NamedTuple}()
+rmspe_values = Dict{Symbol, Float64}()
+
+for species in species_list
+    X_train, X_test, Y_train, Y_test = normalized[species]
+
+    # Get hyperparameter ranges
+    d_range = darg_sep(X_train)
+    g_range = garg(Y_train)
+
+    d_start = [r.start for r in d_range.ranges]
+    d_ranges = [(r.min, r.max) for r in d_range.ranges]
+
+    # Fit GP
+    gp = new_gp_sep(X_train, Y_train, d_start, g_range.start)
+    jmle_gp_sep(gp; drange=d_ranges, grange=(g_range.min, g_range.max))
+
+    # Predict
+    pred = pred_gp_sep(gp, X_test; lite=true)
+
+    # RMSPE
+    pct_errors = ((pred.mean .- Y_test) ./ Y_test) .* 100
+    rmspe = sqrt(mean(pct_errors.^2))
+
+    gp_models[species] = gp
+    predictions[species] = (mean=pred.mean, Y_test=Y_test)
+    rmspe_values[species] = rmspe
+
+    println(&quot;$species RMSPE: $(round(rmspe, digits=3))%&quot;)
+end</code></pre><p>RMSPE comparison across species:</p><p><img src="../../assets/chap2_species_rmspe.png" alt="RMSPE by Species"/></p><p>Parity plot for Helium predictions:</p><p><img src="../../assets/chap2_parity_He.png" alt="Helium Parity Plot"/></p><h2 id="Atmospheric-Mixture"><a class="docs-heading-anchor" href="#Atmospheric-Mixture">Atmospheric Mixture</a><a id="Atmospheric-Mixture-1"></a><a class="docs-heading-anchor-permalink" href="#Atmospheric-Mixture" title="Permalink"></a></h2><p>Combine species predictions using mole fraction weighting:</p><pre><code class="language-julia hljs"># Example mole fractions at ~400 km altitude
+mole_fractions = Dict(
+    :O =&gt; 0.70, :N2 =&gt; 0.15, :He =&gt; 0.08,
+    :O2 =&gt; 0.04, :N =&gt; 0.02, :H =&gt; 0.01
+)
+
+# Mass-weighted mixture
+numerator = zeros(100)
+denominator = zeros(100)
+true_numerator = zeros(100)
+
+for species in species_list
+    weight = mole_fractions[species] * molecular_mass[species]
+    numerator .+= predictions[species].mean .* weight
+    true_numerator .+= predictions[species].Y_test .* weight
+    denominator .+= weight
+end
+
+Cd_mix_pred = numerator ./ denominator
+Cd_mix_true = true_numerator ./ denominator
+
+# Mixture RMSPE
+pct_errors_mix = ((Cd_mix_pred .- Cd_mix_true) ./ Cd_mix_true) .* 100
+rmspe_mixture = sqrt(mean(pct_errors_mix.^2))
+
+println(&quot;Mixture RMSPE: $(round(rmspe_mixture, digits=3))%&quot;)</code></pre><p>Parity plot for the atmospheric mixture predictions:</p><p><img src="../../assets/chap2_parity_mixture.png" alt="Mixture Parity Plot"/></p><h2 id="Lengthscale-Analysis"><a class="docs-heading-anchor" href="#Lengthscale-Analysis">Lengthscale Analysis</a><a id="Lengthscale-Analysis-1"></a><a class="docs-heading-anchor-permalink" href="#Lengthscale-Analysis" title="Permalink"></a></h2><pre><code class="language-julia hljs">println(&quot;\nLengthscales by variable (smaller = more important):&quot;)
+println(rpad(&quot;Species&quot;, 8), join([rpad(v, 10) for v in var_names]))
+
+for species in species_list
+    d = gp_models[species].d
+    vals = join([rpad(round(d[j], sigdigits=3), 10) for j in 1:7])
+    println(rpad(string(species), 8), vals)
+end
+
+# Average importance
+avg_d = zeros(7)
+for species in species_list
+    avg_d .+= gp_models[species].d
+end
+avg_d ./= length(species_list)
+
+sorted_idx = sortperm(avg_d)
+println(&quot;\nMost influential inputs:&quot;)
+for i in 1:3
+    j = sorted_idx[i]
+    println(&quot;  $(var_names[j]): avg lengthscale = $(round(avg_d[j], sigdigits=3))&quot;)
+end</code></pre><p>Lengthscales by species reveal which inputs matter most:</p><p><img src="../../assets/chap2_lengthscales.png" alt="Lengthscales by Species"/></p><h2 id="Main-Effects-(for-Helium)"><a class="docs-heading-anchor" href="#Main-Effects-(for-Helium)">Main Effects (for Helium)</a><a id="Main-Effects-(for-Helium)-1"></a><a class="docs-heading-anchor-permalink" href="#Main-Effects-(for-Helium)" title="Permalink"></a></h2><pre><code class="language-julia hljs">gp_he = gp_models[:He]
+baseline = fill(0.5, 7)
+
+n_me = 100
+x_me = range(0.0, 1.0, length=n_me)
+
+main_effects_he = Matrix{Float64}(undef, n_me, 7)
+
+for j in 1:7
+    XX = repeat(baseline&#39;, n_me, 1)
+    XX[:, j] = collect(x_me)
+    pred = pred_gp_sep(gp_he, XX; lite=true)
+    main_effects_he[:, j] = pred.mean
+end
+
+println(&quot;\nHe sensitivity (effect range):&quot;)
+for j in 1:7
+    range_j = maximum(main_effects_he[:, j]) - minimum(main_effects_he[:, j])
+    println(&quot;  $(var_names[j]): $(round(range_j, digits=4))&quot;)
+end</code></pre><p>Main effects for Helium show variable sensitivities:</p><p><img src="../../assets/chap2_main_effects.png" alt="Main Effects for He"/></p><h2 id="Visualization-(with-CairoMakie)"><a class="docs-heading-anchor" href="#Visualization-(with-CairoMakie)">Visualization (with CairoMakie)</a><a id="Visualization-(with-CairoMakie)-1"></a><a class="docs-heading-anchor-permalink" href="#Visualization-(with-CairoMakie)" title="Permalink"></a></h2><pre><code class="language-julia hljs">using CairoMakie
+
+# Parity plot for Helium
+fig = Figure(size=(500, 450))
+ax = Axis(fig[1, 1],
+    xlabel=&quot;True Cd&quot;,
+    ylabel=&quot;Predicted Cd&quot;,
+    title=&quot;He: Predicted vs True (RMSPE=$(round(rmspe_values[:He], digits=2))%)&quot;,
+    aspect=DataAspect()
+)
+
+Y_test = predictions[:He].Y_test
+pred_he = predictions[:He].mean
+
+lims = (minimum(vcat(Y_test, pred_he)) - 0.1, maximum(vcat(Y_test, pred_he)) + 0.1)
+lines!(ax, [lims[1], lims[2]], [lims[1], lims[2]], color=:red, linewidth=2, linestyle=:dash)
+scatter!(ax, Y_test, pred_he, color=:blue, markersize=8, alpha=0.7)
+
+xlims!(ax, lims...)
+ylims!(ax, lims...)
+
+fig</code></pre><h2 id="Key-Findings"><a class="docs-heading-anchor" href="#Key-Findings">Key Findings</a><a id="Key-Findings-1"></a><a class="docs-heading-anchor-permalink" href="#Key-Findings" title="Permalink"></a></h2><ol><li><strong>Species variation</strong>: Different species have different drag characteristics</li><li><strong>Input importance</strong>: Velocity magnitude and accommodation coefficients are most influential</li><li><strong>Mixture benefit</strong>: Mixture RMSPE is often lower due to averaging effects</li><li><strong>Separable advantage</strong>: Per-dimension lengthscales reveal input sensitivities</li><li><strong>Scalability</strong>: GPs trained on 1000 points predict accurately on held-out data</li></ol></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../surrogates/">« Wing Weight Surrogate</a><a class="docs-footer-nextpage" href="../../api/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Tuesday 27 January 2026 00:03">Tuesday 27 January 2026</span>. Using Julia version 1.12.4.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

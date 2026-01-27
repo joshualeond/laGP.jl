@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Posterior Sampling · laGP.jl</title><meta name="title" content="Posterior Sampling · laGP.jl"/><meta property="og:title" content="Posterior Sampling · laGP.jl"/><meta property="twitter:title" content="Posterior Sampling · laGP.jl"/><meta name="description" content="Documentation for laGP.jl."/><meta property="og:description" content="Documentation for laGP.jl."/><meta property="twitter:description" content="Documentation for laGP.jl."/><meta property="og:url" content="https://joshualeond.github.io/laGP.jl/stable/examples/sinusoidal/"/><meta property="twitter:url" content="https://joshualeond.github.io/laGP.jl/stable/examples/sinusoidal/"/><link rel="canonical" href="https://joshualeond.github.io/laGP.jl/stable/examples/sinusoidal/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">laGP.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../getting_started/">Getting Started</a></li><li><a class="tocitem" href="../../theory/">Theory</a></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../demo/">Local Approximate GP Demo</a></li><li class="is-active"><a class="tocitem" href>Posterior Sampling</a><ul class="internal"><li><a class="tocitem" href="#Overview"><span>Overview</span></a></li><li><a class="tocitem" href="#Setup"><span>Setup</span></a></li><li><a class="tocitem" href="#Generate-Training-Data"><span>Generate Training Data</span></a></li><li><a class="tocitem" href="#Fit-Isotropic-GP"><span>Fit Isotropic GP</span></a></li><li><a class="tocitem" href="#Full-Posterior-Prediction"><span>Full Posterior Prediction</span></a></li><li><a class="tocitem" href="#Draw-Posterior-Samples"><span>Draw Posterior Samples</span></a></li><li><a class="tocitem" href="#Visualization-(with-CairoMakie)"><span>Visualization (with CairoMakie)</span></a></li><li><a class="tocitem" href="#Key-Concepts"><span>Key Concepts</span></a></li><li><a class="tocitem" href="#Credible-Intervals"><span>Credible Intervals</span></a></li></ul></li><li><a class="tocitem" href="../surrogates/">Wing Weight Surrogate</a></li><li><a class="tocitem" href="../satellite/">Satellite Drag Modeling</a></li></ul></li><li><a class="tocitem" href="../../api/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>Posterior Sampling</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Posterior Sampling</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/joshualeond/laGP.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/joshualeond/laGP.jl/blob/main/docs/src/examples/sinusoidal.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Posterior-Sampling-Example"><a class="docs-heading-anchor" href="#Posterior-Sampling-Example">Posterior Sampling Example</a><a id="Posterior-Sampling-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Posterior-Sampling-Example" title="Permalink"></a></h1><p>This example demonstrates GP posterior sampling using the full covariance matrix, fitting a sparse sinusoidal dataset.</p><h2 id="Overview"><a class="docs-heading-anchor" href="#Overview">Overview</a><a id="Overview-1"></a><a class="docs-heading-anchor-permalink" href="#Overview" title="Permalink"></a></h2><p>We will:</p><ol><li>Fit an isotropic GP to sparse sinusoidal data</li><li>Use <code>pred_gp(lite=false)</code> to get the full posterior covariance</li><li>Draw posterior samples from the GP</li><li>Visualize the posterior uncertainty</li></ol><h2 id="Setup"><a class="docs-heading-anchor" href="#Setup">Setup</a><a id="Setup-1"></a><a class="docs-heading-anchor-permalink" href="#Setup" title="Permalink"></a></h2><pre><code class="language-julia hljs">using laGP
+using Distributions
+using LinearAlgebra
+using Random
+
+Random.seed!(42)</code></pre><h2 id="Generate-Training-Data"><a class="docs-heading-anchor" href="#Generate-Training-Data">Generate Training Data</a><a id="Generate-Training-Data-1"></a><a class="docs-heading-anchor-permalink" href="#Generate-Training-Data" title="Permalink"></a></h2><p>Create sparse observations from sin(x):</p><pre><code class="language-julia hljs"># Sparse training points over [0, 2π]
+X_train = reshape([0.5, 1.5, 2.5, 3.5, 5.0, 6.0], :, 1)
+Y_train = sin.(X_train[:, 1])
+
+println(&quot;Training data:&quot;)
+println(&quot;  X: &quot;, vec(X_train))
+println(&quot;  Y: &quot;, Y_train)</code></pre><h2 id="Fit-Isotropic-GP"><a class="docs-heading-anchor" href="#Fit-Isotropic-GP">Fit Isotropic GP</a><a id="Fit-Isotropic-GP-1"></a><a class="docs-heading-anchor-permalink" href="#Fit-Isotropic-GP" title="Permalink"></a></h2><pre><code class="language-julia hljs"># Initial hyperparameters
+d_init = 2.0   # lengthscale
+g_init = 1e-6  # small nugget for near-interpolation
+
+# Create GP
+gp = new_gp(X_train, Y_train, d_init, g_init)
+
+# MLE for lengthscale only (keep small nugget fixed)
+mle_gp(gp, :d; tmax=20.0)
+
+println(&quot;Optimized hyperparameters:&quot;)
+println(&quot;  d = &quot;, gp.d)
+println(&quot;  g = &quot;, gp.g)
+println(&quot;  log-likelihood = &quot;, llik_gp(gp))</code></pre><h2 id="Full-Posterior-Prediction"><a class="docs-heading-anchor" href="#Full-Posterior-Prediction">Full Posterior Prediction</a><a id="Full-Posterior-Prediction-1"></a><a class="docs-heading-anchor-permalink" href="#Full-Posterior-Prediction" title="Permalink"></a></h2><p>Get the full covariance matrix for sampling:</p><pre><code class="language-julia hljs"># Dense test grid
+xx = collect(range(-0.5, 2π + 0.5, length=200))
+XX = reshape(xx, :, 1)
+
+# Get full posterior (lite=false returns GPPredictionFull)
+pred_full = pred_gp(gp, XX; lite=false)
+
+println(&quot;Prediction:&quot;)
+println(&quot;  Test points: &quot;, length(xx))
+println(&quot;  Sigma size: &quot;, size(pred_full.Sigma))</code></pre><h2 id="Draw-Posterior-Samples"><a class="docs-heading-anchor" href="#Draw-Posterior-Samples">Draw Posterior Samples</a><a id="Draw-Posterior-Samples-1"></a><a class="docs-heading-anchor-permalink" href="#Draw-Posterior-Samples" title="Permalink"></a></h2><pre><code class="language-julia hljs"># Create multivariate normal distribution
+mvn = MvNormal(pred_full.mean, Symmetric(pred_full.Sigma))
+
+# Draw samples
+n_samples = 50
+samples = rand(mvn, n_samples)
+
+println(&quot;Posterior samples: &quot;, size(samples))</code></pre><h2 id="Visualization-(with-CairoMakie)"><a class="docs-heading-anchor" href="#Visualization-(with-CairoMakie)">Visualization (with CairoMakie)</a><a id="Visualization-(with-CairoMakie)-1"></a><a class="docs-heading-anchor-permalink" href="#Visualization-(with-CairoMakie)" title="Permalink"></a></h2><pre><code class="language-julia hljs">using CairoMakie
+
+fig = Figure(size=(700, 500))
+ax = Axis(fig[1, 1],
+    xlabel=&quot;x&quot;,
+    ylabel=&quot;Y(x) | θ̂&quot;,
+    title=&quot;GP Posterior Samples&quot;
+)
+
+# Draw posterior samples (gray, semi-transparent)
+for i in 1:n_samples
+    lines!(ax, xx, samples[:, i], color=(:gray, 0.3), linewidth=0.5)
+end
+
+# Draw posterior mean (blue)
+lines!(ax, xx, pred_full.mean, color=:blue, linewidth=2, label=&quot;Posterior mean&quot;)
+
+# Draw true function (dashed green)
+lines!(ax, xx, sin.(xx), color=:green, linewidth=1.5, linestyle=:dash, label=&quot;sin(x)&quot;)
+
+# Draw training points (black circles)
+scatter!(ax, vec(X_train), Y_train, color=:black, markersize=12, label=&quot;Training data&quot;)
+
+axislegend(ax, position=:lb)
+xlims!(ax, -0.5, 2π + 0.5)
+ylims!(ax, -2.0, 2.0)
+
+fig</code></pre><p>The resulting visualization shows the posterior samples with the GP mean and true function:</p><p><img src="../../assets/sinusoidal_example.png" alt="GP Posterior Samples"/></p><h2 id="Key-Concepts"><a class="docs-heading-anchor" href="#Key-Concepts">Key Concepts</a><a id="Key-Concepts-1"></a><a class="docs-heading-anchor-permalink" href="#Key-Concepts" title="Permalink"></a></h2><h3 id="Posterior-Mean-and-Variance"><a class="docs-heading-anchor" href="#Posterior-Mean-and-Variance">Posterior Mean and Variance</a><a id="Posterior-Mean-and-Variance-1"></a><a class="docs-heading-anchor-permalink" href="#Posterior-Mean-and-Variance" title="Permalink"></a></h3><p>The posterior mean interpolates the training data (due to small nugget), while the variance:</p><ul><li>Is near zero at training points</li><li>Increases between and beyond training points</li><li>Reflects uncertainty about the true function</li></ul><h3 id="Posterior-Samples"><a class="docs-heading-anchor" href="#Posterior-Samples">Posterior Samples</a><a id="Posterior-Samples-1"></a><a class="docs-heading-anchor-permalink" href="#Posterior-Samples" title="Permalink"></a></h3><p>Each sample represents a plausible function consistent with:</p><ul><li>The training data</li><li>The GP prior (smoothness encoded by kernel)</li><li>The estimated hyperparameters</li></ul><h3 id="Practical-Notes"><a class="docs-heading-anchor" href="#Practical-Notes">Practical Notes</a><a id="Practical-Notes-1"></a><a class="docs-heading-anchor-permalink" href="#Practical-Notes" title="Permalink"></a></h3><ol><li><strong>Nugget size</strong>: A very small nugget (1e-6) gives near-interpolation. Increase for noisy data.</li><li><strong>Memory</strong>: Full covariance requires O(n²) storage. For large test sets, use <code>lite=true</code>.</li><li><strong>Numerical stability</strong>: The covariance matrix may need symmetrization before sampling.</li></ol><h2 id="Credible-Intervals"><a class="docs-heading-anchor" href="#Credible-Intervals">Credible Intervals</a><a id="Credible-Intervals-1"></a><a class="docs-heading-anchor-permalink" href="#Credible-Intervals" title="Permalink"></a></h2><p>Instead of sampling, you can compute pointwise intervals:</p><pre><code class="language-julia hljs">using Distributions: TDist, quantile
+
+# 95% credible intervals using Student-t distribution
+t_dist = TDist(pred_full.df)
+t_crit = quantile(t_dist, 0.975)
+
+# Standard deviation at each point
+std_pred = sqrt.(diag(pred_full.Sigma))
+
+# Intervals
+lower = pred_full.mean .- t_crit .* std_pred
+upper = pred_full.mean .+ t_crit .* std_pred</code></pre><p>This is more efficient than sampling when you only need intervals.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../demo/">« Local Approximate GP Demo</a><a class="docs-footer-nextpage" href="../surrogates/">Wing Weight Surrogate »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Tuesday 27 January 2026 00:03">Tuesday 27 January 2026</span>. Using Julia version 1.12.4.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

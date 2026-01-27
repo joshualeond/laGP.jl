@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Local Approximate GP Demo · laGP.jl</title><meta name="title" content="Local Approximate GP Demo · laGP.jl"/><meta property="og:title" content="Local Approximate GP Demo · laGP.jl"/><meta property="twitter:title" content="Local Approximate GP Demo · laGP.jl"/><meta name="description" content="Documentation for laGP.jl."/><meta property="og:description" content="Documentation for laGP.jl."/><meta property="twitter:description" content="Documentation for laGP.jl."/><meta property="og:url" content="https://joshualeond.github.io/laGP.jl/stable/examples/demo/"/><meta property="twitter:url" content="https://joshualeond.github.io/laGP.jl/stable/examples/demo/"/><link rel="canonical" href="https://joshualeond.github.io/laGP.jl/stable/examples/demo/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">laGP.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../getting_started/">Getting Started</a></li><li><a class="tocitem" href="../../theory/">Theory</a></li><li><span class="tocitem">Examples</span><ul><li class="is-active"><a class="tocitem" href>Local Approximate GP Demo</a><ul class="internal"><li><a class="tocitem" href="#Overview"><span>Overview</span></a></li><li><a class="tocitem" href="#Setup"><span>Setup</span></a></li><li><a class="tocitem" href="#Test-Function"><span>Test Function</span></a></li><li><a class="tocitem" href="#Generate-Training-Data"><span>Generate Training Data</span></a></li><li><a class="tocitem" href="#Create-Test-Grid"><span>Create Test Grid</span></a></li><li><a class="tocitem" href="#Full-GP-Model"><span>Full GP Model</span></a></li><li><a class="tocitem" href="#Local-Approximate-GP"><span>Local Approximate GP</span></a></li><li><a class="tocitem" href="#Compare-Results"><span>Compare Results</span></a></li><li><a class="tocitem" href="#Local-Design-Visualization"><span>Local Design Visualization</span></a></li><li><a class="tocitem" href="#Key-Observations"><span>Key Observations</span></a></li><li><a class="tocitem" href="#Next-Steps"><span>Next Steps</span></a></li></ul></li><li><a class="tocitem" href="../sinusoidal/">Posterior Sampling</a></li><li><a class="tocitem" href="../surrogates/">Wing Weight Surrogate</a></li><li><a class="tocitem" href="../satellite/">Satellite Drag Modeling</a></li></ul></li><li><a class="tocitem" href="../../api/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>Local Approximate GP Demo</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Local Approximate GP Demo</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/joshualeond/laGP.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/joshualeond/laGP.jl/blob/main/docs/src/examples/demo.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Local-Approximate-GP-Demo"><a class="docs-heading-anchor" href="#Local-Approximate-GP-Demo">Local Approximate GP Demo</a><a id="Local-Approximate-GP-Demo-1"></a><a class="docs-heading-anchor-permalink" href="#Local-Approximate-GP-Demo" title="Permalink"></a></h1><p>This example demonstrates the core laGP.jl workflow, adapted from the R laGP package demo.</p><h2 id="Overview"><a class="docs-heading-anchor" href="#Overview">Overview</a><a id="Overview-1"></a><a class="docs-heading-anchor-permalink" href="#Overview" title="Permalink"></a></h2><p>We will:</p><ol><li>Build a full GP model on a 2D test function</li><li>Make predictions with local approximate GP</li><li>Compare different acquisition methods</li></ol><h2 id="Setup"><a class="docs-heading-anchor" href="#Setup">Setup</a><a id="Setup-1"></a><a class="docs-heading-anchor-permalink" href="#Setup" title="Permalink"></a></h2><pre><code class="language-julia hljs">using laGP
+using Random
+using LatinHypercubeSampling
+using Statistics: mean
+
+Random.seed!(42)</code></pre><h2 id="Test-Function"><a class="docs-heading-anchor" href="#Test-Function">Test Function</a><a id="Test-Function-1"></a><a class="docs-heading-anchor-permalink" href="#Test-Function" title="Permalink"></a></h2><p>We use a modified Ackley-like function with interesting local structure:</p><pre><code class="language-julia hljs">function f2d(X::Matrix)
+    x = X[:, 1]
+    y = X[:, 2]
+
+    g(z) = exp.(-(z .- 1).^2) .+ exp.(-0.8 .* (z .+ 1).^2) .- 0.05 .* sin.(8 .* (z .+ 0.1))
+
+    return -g(x) .* g(y)
+end</code></pre><h2 id="Generate-Training-Data"><a class="docs-heading-anchor" href="#Generate-Training-Data">Generate Training Data</a><a id="Generate-Training-Data-1"></a><a class="docs-heading-anchor-permalink" href="#Generate-Training-Data" title="Permalink"></a></h2><p>Create a Latin Hypercube design:</p><pre><code class="language-julia hljs">n_train = 100
+plan, _ = LHCoptim(n_train, 2, 10)
+X_train = Matrix{Float64}(plan ./ n_train)
+
+# Scale to [-2, 2] for f2d
+X_scaled = 4.0 .* (X_train .- 0.5)
+Z_train = f2d(X_scaled)
+
+println(&quot;Training data: $(n_train) points&quot;)
+println(&quot;Response range: [$(minimum(Z_train)), $(maximum(Z_train))]&quot;)</code></pre><h2 id="Create-Test-Grid"><a class="docs-heading-anchor" href="#Create-Test-Grid">Create Test Grid</a><a id="Create-Test-Grid-1"></a><a class="docs-heading-anchor-permalink" href="#Create-Test-Grid" title="Permalink"></a></h2><pre><code class="language-julia hljs">n_test_side = 100
+x_test = range(0.0, 1.0, length=n_test_side)
+X_test = Matrix{Float64}(undef, n_test_side^2, 2)
+
+idx = 1
+for j in 1:n_test_side
+    for i in 1:n_test_side
+        X_test[idx, 1] = x_test[i]
+        X_test[idx, 2] = x_test[j]
+        idx += 1
+    end
+end
+
+println(&quot;Test grid: $(n_test_side^2) points&quot;)</code></pre><h2 id="Full-GP-Model"><a class="docs-heading-anchor" href="#Full-GP-Model">Full GP Model</a><a id="Full-GP-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Full-GP-Model" title="Permalink"></a></h2><p>First, build a full GP for comparison:</p><pre><code class="language-julia hljs"># Estimate hyperparameters
+d_range = darg(X_train)
+g_range = garg(Z_train)
+
+println(&quot;Lengthscale range: $(d_range.min) to $(d_range.max)&quot;)
+println(&quot;Nugget range: $(g_range.min) to $(g_range.max)&quot;)
+
+# Create and fit GP
+gp = new_gp(X_train, Z_train, d_range.start, g_range.start)
+jmle_gp(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
+
+println(&quot;Optimized: d=$(gp.d), g=$(gp.g)&quot;)
+println(&quot;Log-likelihood: $(llik_gp(gp))&quot;)
+
+# Predict on test grid
+pred_full = pred_gp(gp, X_test; lite=true)</code></pre><p>The full GP provides smooth predictions over the entire domain:</p><p><img src="../../assets/gp_surface.png" alt="GP Mean Surface"/></p><p>The variance surface shows uncertainty, which is lowest near training data:</p><p><img src="../../assets/gp_variance.png" alt="GP Variance Surface"/></p><h2 id="Local-Approximate-GP"><a class="docs-heading-anchor" href="#Local-Approximate-GP">Local Approximate GP</a><a id="Local-Approximate-GP-1"></a><a class="docs-heading-anchor-permalink" href="#Local-Approximate-GP" title="Permalink"></a></h2><p>Now use aGP with different acquisition methods:</p><pre><code class="language-julia hljs"># ALC method (best accuracy)
+result_alc = agp(X_train, Z_train, X_test;
+    start=6, endpt=50,
+    d=(start=gp.d, mle=false),
+    g=(start=gp.g, mle=false),
+    method=:alc
+)
+
+# NN method (fastest)
+result_nn = agp(X_train, Z_train, X_test;
+    start=6, endpt=50,
+    d=(start=gp.d, mle=false),
+    g=(start=gp.g, mle=false),
+    method=:nn
+)</code></pre><p>The aGP predictions are nearly indistinguishable from the full GP:</p><p><img src="../../assets/agp_predictions.png" alt="aGP Predictions"/></p><h2 id="Compare-Results"><a class="docs-heading-anchor" href="#Compare-Results">Compare Results</a><a id="Compare-Results-1"></a><a class="docs-heading-anchor-permalink" href="#Compare-Results" title="Permalink"></a></h2><pre><code class="language-julia hljs"># True values for comparison
+true_vals = f2d(4.0 .* (X_test .- 0.5))
+
+# RMSE comparison
+rmse_full = sqrt(mean((pred_full.mean .- true_vals).^2))
+rmse_alc = sqrt(mean((result_alc.mean .- true_vals).^2))
+rmse_nn = sqrt(mean((result_nn.mean .- true_vals).^2))
+
+println(&quot;RMSE Comparison:&quot;)
+println(&quot;  Full GP: $(round(rmse_full, digits=6))&quot;)
+println(&quot;  aGP ALC: $(round(rmse_alc, digits=6))&quot;)
+println(&quot;  aGP NN:  $(round(rmse_nn, digits=6))&quot;)</code></pre><p>Side-by-side comparison of full GP vs local approximate GP predictions:</p><p><img src="../../assets/comparison.png" alt="Full GP vs aGP Comparison"/></p><h2 id="Local-Design-Visualization"><a class="docs-heading-anchor" href="#Local-Design-Visualization">Local Design Visualization</a><a id="Local-Design-Visualization-1"></a><a class="docs-heading-anchor-permalink" href="#Local-Design-Visualization" title="Permalink"></a></h2><p>Examine which points are selected for a specific prediction location:</p><pre><code class="language-julia hljs"># Single prediction at center
+Xref = [0.5, 0.5]
+lagp_result = lagp(Xref, 6, 30, X_train, Z_train;
+    d=gp.d, g=gp.g, method=:alc
+)
+
+println(&quot;Local design size: $(length(lagp_result.indices))&quot;)
+println(&quot;Prediction: mean=$(lagp_result.mean), var=$(lagp_result.var)&quot;)</code></pre><p>The local design shows which training points were selected for predicting at the center:</p><p><img src="../../assets/local_design.png" alt="Local Design Selection"/></p><p>The test function itself has interesting structure with constraints:</p><p><img src="../../assets/constrained_problem.png" alt="Constrained Problem"/></p><h2 id="Key-Observations"><a class="docs-heading-anchor" href="#Key-Observations">Key Observations</a><a id="Key-Observations-1"></a><a class="docs-heading-anchor-permalink" href="#Key-Observations" title="Permalink"></a></h2><ol><li><strong>Full GP vs Local</strong>: For smooth functions, full GP and aGP produce similar predictions</li><li><strong>ALC vs NN</strong>: ALC typically provides better accuracy by selecting informative points</li><li><strong>Computation</strong>: aGP scales better for large datasets (local designs are small)</li><li><strong>Hyperparameters</strong>: Using MLE-optimized parameters from a full GP subset works well</li></ol><h2 id="Next-Steps"><a class="docs-heading-anchor" href="#Next-Steps">Next Steps</a><a id="Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Next-Steps" title="Permalink"></a></h2><ul><li>Try different <code>start</code> and <code>endpt</code> values</li><li>Enable local MLE with <code>d=(start=..., mle=true)</code></li><li>Use <code>:mspe</code> method for a balance of speed and accuracy</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../../theory/">« Theory</a><a class="docs-footer-nextpage" href="../sinusoidal/">Posterior Sampling »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Tuesday 27 January 2026 00:03">Tuesday 27 January 2026</span>. Using Julia version 1.12.4.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

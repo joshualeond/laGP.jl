@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Getting Started · laGP.jl</title><meta name="title" content="Getting Started · laGP.jl"/><meta property="og:title" content="Getting Started · laGP.jl"/><meta property="twitter:title" content="Getting Started · laGP.jl"/><meta name="description" content="Documentation for laGP.jl."/><meta property="og:description" content="Documentation for laGP.jl."/><meta property="twitter:description" content="Documentation for laGP.jl."/><meta property="og:url" content="https://joshualeond.github.io/laGP.jl/stable/getting_started/"/><meta property="twitter:url" content="https://joshualeond.github.io/laGP.jl/stable/getting_started/"/><link rel="canonical" href="https://joshualeond.github.io/laGP.jl/stable/getting_started/"/><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../search_index.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">laGP.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../">Home</a></li><li class="is-active"><a class="tocitem" href>Getting Started</a><ul class="internal"><li><a class="tocitem" href="#Creating-a-GP-Model"><span>Creating a GP Model</span></a></li><li><a class="tocitem" href="#Hyperparameter-Estimation"><span>Hyperparameter Estimation</span></a></li><li><a class="tocitem" href="#Making-Predictions"><span>Making Predictions</span></a></li><li><a class="tocitem" href="#Local-Approximate-GP"><span>Local Approximate GP</span></a></li><li><a class="tocitem" href="#Acquisition-Methods"><span>Acquisition Methods</span></a></li><li><a class="tocitem" href="#Using-AbstractGPs-Backend"><span>Using AbstractGPs Backend</span></a></li><li><a class="tocitem" href="#Next-Steps"><span>Next Steps</span></a></li></ul></li><li><a class="tocitem" href="../theory/">Theory</a></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../examples/demo/">Local Approximate GP Demo</a></li><li><a class="tocitem" href="../examples/sinusoidal/">Posterior Sampling</a></li><li><a class="tocitem" href="../examples/surrogates/">Wing Weight Surrogate</a></li><li><a class="tocitem" href="../examples/satellite/">Satellite Drag Modeling</a></li></ul></li><li><a class="tocitem" href="../api/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>Getting Started</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Getting Started</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/joshualeond/laGP.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/joshualeond/laGP.jl/blob/main/docs/src/getting_started.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Getting-Started"><a class="docs-heading-anchor" href="#Getting-Started">Getting Started</a><a id="Getting-Started-1"></a><a class="docs-heading-anchor-permalink" href="#Getting-Started" title="Permalink"></a></h1><p>This tutorial covers the basics of using laGP.jl for Gaussian Process regression.</p><h2 id="Creating-a-GP-Model"><a class="docs-heading-anchor" href="#Creating-a-GP-Model">Creating a GP Model</a><a id="Creating-a-GP-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Creating-a-GP-Model" title="Permalink"></a></h2><h3 id="Isotropic-GP"><a class="docs-heading-anchor" href="#Isotropic-GP">Isotropic GP</a><a id="Isotropic-GP-1"></a><a class="docs-heading-anchor-permalink" href="#Isotropic-GP" title="Permalink"></a></h3><p>An isotropic GP uses a single lengthscale parameter for all dimensions:</p><pre><code class="language-julia hljs">using laGP
+
+# Training data: n observations, m dimensions
+X = rand(50, 2)  # 50 points in 2D
+Z = sin.(X[:, 1]) .+ cos.(X[:, 2]) + 0.1 * randn(50)
+
+# Initial hyperparameters
+d = 0.5  # lengthscale
+g = 0.01 # nugget (noise variance)
+
+# Create GP
+gp = new_gp(X, Z, d, g)</code></pre><h3 id="Separable-GP-(ARD)"><a class="docs-heading-anchor" href="#Separable-GP-(ARD)">Separable GP (ARD)</a><a id="Separable-GP-(ARD)-1"></a><a class="docs-heading-anchor-permalink" href="#Separable-GP-(ARD)" title="Permalink"></a></h3><p>A separable GP uses per-dimension lengthscales:</p><pre><code class="language-julia hljs"># Per-dimension lengthscales
+d = [0.5, 0.3]  # different lengthscale for each dimension
+
+# Create separable GP
+gp_sep = new_gp_sep(X, Z, d, g)</code></pre><h2 id="Hyperparameter-Estimation"><a class="docs-heading-anchor" href="#Hyperparameter-Estimation">Hyperparameter Estimation</a><a id="Hyperparameter-Estimation-1"></a><a class="docs-heading-anchor-permalink" href="#Hyperparameter-Estimation" title="Permalink"></a></h2><h3 id="Using-darg-and-garg"><a class="docs-heading-anchor" href="#Using-darg-and-garg">Using <code>darg</code> and <code>garg</code></a><a id="Using-darg-and-garg-1"></a><a class="docs-heading-anchor-permalink" href="#Using-darg-and-garg" title="Permalink"></a></h3><p>The <code>darg</code> and <code>garg</code> functions compute sensible hyperparameter ranges from your data:</p><pre><code class="language-julia hljs"># Get data-adaptive ranges
+d_range = darg(X)
+g_range = garg(Z)
+
+println(&quot;Lengthscale: start=$(d_range.start), range=[$(d_range.min), $(d_range.max)]&quot;)
+println(&quot;Nugget: start=$(g_range.start), range=[$(g_range.min), $(g_range.max)]&quot;)
+
+# Create GP with data-adaptive starting values
+gp = new_gp(X, Z, d_range.start, g_range.start)</code></pre><h3 id="Maximum-Likelihood-Estimation"><a class="docs-heading-anchor" href="#Maximum-Likelihood-Estimation">Maximum Likelihood Estimation</a><a id="Maximum-Likelihood-Estimation-1"></a><a class="docs-heading-anchor-permalink" href="#Maximum-Likelihood-Estimation" title="Permalink"></a></h3><p>Optimize hyperparameters using MLE:</p><pre><code class="language-julia hljs"># Single parameter optimization
+mle_gp(gp, :d; tmax=d_range.max)  # optimize lengthscale only
+
+# Joint MLE of both parameters
+jmle_gp(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
+
+println(&quot;Optimized d: &quot;, gp.d)
+println(&quot;Optimized g: &quot;, gp.g)</code></pre><p>For separable GPs:</p><pre><code class="language-julia hljs">d_range_sep = darg_sep(X)
+gp_sep = new_gp_sep(X, Z, [r.start for r in d_range_sep.ranges], g_range.start)
+
+jmle_gp_sep(gp_sep;
+    drange=[(r.min, r.max) for r in d_range_sep.ranges],
+    grange=(g_range.min, g_range.max)
+)
+
+println(&quot;Optimized lengthscales: &quot;, gp_sep.d)</code></pre><h2 id="Making-Predictions"><a class="docs-heading-anchor" href="#Making-Predictions">Making Predictions</a><a id="Making-Predictions-1"></a><a class="docs-heading-anchor-permalink" href="#Making-Predictions" title="Permalink"></a></h2><h3 id="Basic-Prediction"><a class="docs-heading-anchor" href="#Basic-Prediction">Basic Prediction</a><a id="Basic-Prediction-1"></a><a class="docs-heading-anchor-permalink" href="#Basic-Prediction" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Test points
+X_test = rand(10, 2)
+
+# Predict (lite=true returns diagonal variances only)
+pred = pred_gp(gp, X_test; lite=true)
+
+println(&quot;Mean: &quot;, pred.mean)
+println(&quot;Variance: &quot;, pred.s2)
+println(&quot;Degrees of freedom: &quot;, pred.df)</code></pre><h3 id="Full-Covariance-Matrix"><a class="docs-heading-anchor" href="#Full-Covariance-Matrix">Full Covariance Matrix</a><a id="Full-Covariance-Matrix-1"></a><a class="docs-heading-anchor-permalink" href="#Full-Covariance-Matrix" title="Permalink"></a></h3><p>For posterior sampling, get the full covariance:</p><pre><code class="language-julia hljs"># Full prediction (lite=false returns full covariance matrix)
+pred_full = pred_gp(gp, X_test; lite=false)
+
+println(&quot;Covariance matrix size: &quot;, size(pred_full.Sigma))
+
+# Draw posterior samples
+using Distributions
+mvn = MvNormal(pred_full.mean, Symmetric(pred_full.Sigma))
+samples = rand(mvn, 100)  # 100 posterior samples</code></pre><h2 id="Local-Approximate-GP"><a class="docs-heading-anchor" href="#Local-Approximate-GP">Local Approximate GP</a><a id="Local-Approximate-GP-1"></a><a class="docs-heading-anchor-permalink" href="#Local-Approximate-GP" title="Permalink"></a></h2><p>For large datasets, use local approximate GP:</p><h3 id="Single-Point-Prediction-with-lagp"><a class="docs-heading-anchor" href="#Single-Point-Prediction-with-lagp">Single Point Prediction with <code>lagp</code></a><a id="Single-Point-Prediction-with-lagp-1"></a><a class="docs-heading-anchor-permalink" href="#Single-Point-Prediction-with-lagp" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Large training set
+X_train = rand(5000, 2)
+Z_train = sin.(2π * X_train[:, 1]) .* cos.(2π * X_train[:, 2])
+
+# Reference point to predict
+Xref = [0.5, 0.5]
+
+# Local GP prediction
+result = lagp(Xref, 6, 50, X_train, Z_train;
+    d=0.1, g=1e-6,
+    method=:alc  # :alc, :mspe, or :nn
+)
+
+println(&quot;Prediction: &quot;, result.mean)
+println(&quot;Variance: &quot;, result.var)
+println(&quot;Local design indices: &quot;, result.indices)</code></pre><h3 id="Batch-Predictions-with-agp"><a class="docs-heading-anchor" href="#Batch-Predictions-with-agp">Batch Predictions with <code>agp</code></a><a id="Batch-Predictions-with-agp-1"></a><a class="docs-heading-anchor-permalink" href="#Batch-Predictions-with-agp" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Multiple test points
+X_test = rand(100, 2)
+
+# Get hyperparameter ranges
+d_range = darg(X_train)
+g_range = garg(Z_train)
+
+# Approximate GP predictions
+result = agp(X_train, Z_train, X_test;
+    start=6,   # initial nearest neighbors
+    endpt=50,  # final local design size
+    d=(start=d_range.start, mle=false),
+    g=(start=g_range.start, mle=false),
+    method=:alc,
+    parallel=true  # use multi-threading
+)
+
+println(&quot;Predictions shape: &quot;, size(result.mean))</code></pre><h2 id="Acquisition-Methods"><a class="docs-heading-anchor" href="#Acquisition-Methods">Acquisition Methods</a><a id="Acquisition-Methods-1"></a><a class="docs-heading-anchor-permalink" href="#Acquisition-Methods" title="Permalink"></a></h2><p>laGP supports three acquisition methods for local design selection:</p><table><tr><th style="text-align: right">Method</th><th style="text-align: right">Description</th><th style="text-align: right">Use Case</th></tr><tr><td style="text-align: right"><code>:alc</code></td><td style="text-align: right">Active Learning Cohn</td><td style="text-align: right">Best accuracy, slower</td></tr><tr><td style="text-align: right"><code>:mspe</code></td><td style="text-align: right">Mean Squared Prediction Error</td><td style="text-align: right">Balance of speed/accuracy</td></tr><tr><td style="text-align: right"><code>:nn</code></td><td style="text-align: right">Nearest Neighbors</td><td style="text-align: right">Fastest, less accurate</td></tr></table><pre><code class="language-julia hljs"># Compare methods
+result_alc = agp(X_train, Z_train, X_test; method=:alc, ...)
+result_mspe = agp(X_train, Z_train, X_test; method=:mspe, ...)
+result_nn = agp(X_train, Z_train, X_test; method=:nn, ...)</code></pre><h2 id="Using-AbstractGPs-Backend"><a class="docs-heading-anchor" href="#Using-AbstractGPs-Backend">Using AbstractGPs Backend</a><a id="Using-AbstractGPs-Backend-1"></a><a class="docs-heading-anchor-permalink" href="#Using-AbstractGPs-Backend" title="Permalink"></a></h2><p>The package provides AbstractGPs-backed implementations:</p><pre><code class="language-julia hljs"># Create GP using AbstractGPs backend
+gp_model = new_gp_model(X, Z, d, g)
+
+# All operations have matching functions
+pred = pred_gp_model(gp_model, X_test)
+llik = llik_gp_model(gp_model)
+jmle_gp_model(gp_model; drange=..., grange=...)</code></pre><p>These produce equivalent results but leverage the JuliaGaussianProcesses ecosystem.</p><h2 id="Next-Steps"><a class="docs-heading-anchor" href="#Next-Steps">Next Steps</a><a id="Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Next-Steps" title="Permalink"></a></h2><ul><li><a href="../theory/">Theory</a>: Mathematical background on GP kernels and acquisition functions</li><li><a href="../examples/demo/">Examples</a>: Complete worked examples</li><li><a href="../api/">API Reference</a>: Full function documentation</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Home</a><a class="docs-footer-nextpage" href="../theory/">Theory »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Tuesday 27 January 2026 00:03">Tuesday 27 January 2026</span>. Using Julia version 1.12.4.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
