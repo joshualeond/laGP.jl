@@ -35,6 +35,10 @@ function f2d(X::Matrix)
 end
 ```
 
+The function has two peaks and interesting local structure:
+
+![True Function](../assets/true_function.png)
+
 ## Generate Training Data
 
 Create a Latin Hypercube design:
