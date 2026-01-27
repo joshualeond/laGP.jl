@@ -28,6 +28,7 @@ export new_gp
 export pred_gp
 export llik_gp
 export dllik_gp
+export d2llik_gp
 export update_gp!
 
 # Core GP functions (separable)
@@ -35,17 +36,20 @@ export new_gp_sep
 export pred_gp_sep
 export llik_gp_sep
 export dllik_gp_sep
+export d2llik_gp_sep_nug
 export update_gp_sep!
 
 # MLE functions (isotropic)
 export mle_gp
 export jmle_gp
+export amle_gp
 export darg
 export garg
 
 # MLE functions (separable)
 export mle_gp_sep
 export jmle_gp_sep
+export amle_gp_sep
 export darg_sep
 
 # AD-based gradient functions

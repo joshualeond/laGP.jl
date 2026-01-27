@@ -60,6 +60,7 @@ mutable struct GP{T<:Real, K}
     Z::Vector{T}
     kernel::K
     chol::Cholesky{T,Matrix{T}}
+    Ki::Matrix{T}
     KiZ::Vector{T}
     d::T
     g::T
@@ -91,6 +92,7 @@ mutable struct GPsep{T<:Real, K}
     Z::Vector{T}
     kernel::K
     chol::Cholesky{T,Matrix{T}}
+    Ki::Matrix{T}
     KiZ::Vector{T}
     d::Vector{T}
     g::T
