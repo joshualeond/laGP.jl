@@ -20,6 +20,7 @@ makedocs(
             "Multivariate Inputs (ARD)" => "examples/multivariate.md",
             "Wing Weight Surrogate" => "examples/surrogates.md",
             "Satellite Drag Modeling" => "examples/satellite.md",
+            "Bayesian Optimization" => "examples/bayesian_optimization.md",
         ],
         "API Reference" => "api.md",
     ],
