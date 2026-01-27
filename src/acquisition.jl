@@ -23,147 +23,6 @@ function alc_gp(gp::GP{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
     n = size(gp.X, 1)
     n_cand = size(Xcand, 1)
     n_ref = size(Xref, 1)
-    m_dim = size(gp.X, 2)
-    df = T(n)
-
-    # Pre-compute k(X, Xref) - covariance between training and reference
-    k_ref = _cross_covariance(gp.X, Xref, gp.d)  # n x n_ref
-
-    # Pre-compute Ki for ALC calculation
-    Ki = inv(gp.chol)
-
-    # Allocate output
-    alc = Vector{T}(undef, n_cand)
-
-    # Pre-allocate workspace vectors (reused across candidates)
-    kx = Vector{T}(undef, n)
-    Kikx = Vector{T}(undef, n)
-    gvec = Vector{T}(undef, n)
-    kxy = Vector{T}(undef, n_ref)
-
-    # Scaling factor: df / (df - 2)
-    df_rat = df / (df - 2)
-    inv_d = one(T) / gp.d
-
-    @inbounds for i in 1:n_cand
-        # kx = k(X, x_cand) - covariance between training and candidate
-        for j in 1:n
-            dist_sq = zero(T)
-            for dim in 1:m_dim
-                diff = gp.X[j, dim] - Xcand[i, dim]
-                dist_sq += diff * diff
-            end
-            kx[j] = exp(-dist_sq * inv_d)
-        end
-
-        # Kikx = Ki * kx (in-place)
-        mul!(Kikx, Ki, kx)
-
-        # mui = 1 + g - kx' * Ki * kx
-        mui = one(T) + gp.g - dot(kx, Kikx)
-
-        # Skip if numerical problems
-        if mui <= sqrt(eps(T))
-            alc[i] = T(-Inf)
-            continue
-        end
-
-        # gvec = -Kikx / mui (in-place)
-        inv_mui = one(T) / mui
-        for j in 1:n
-            gvec[j] = -Kikx[j] * inv_mui
-        end
-
-        # kxy = k(x_cand, Xref) - covariance between candidate and reference
-        for j in 1:n_ref
-            dist_sq = zero(T)
-            for dim in 1:m_dim
-                diff = Xcand[i, dim] - Xref[j, dim]
-                dist_sq += diff * diff
-            end
-            kxy[j] = exp(-dist_sq * inv_d)
-        end
-
-        # Compute ktKikx for each reference point
-        alc_sum = zero(T)
-        for j in 1:n_ref
-            # kg = k_ref[:, j]' * gvec
-            kg = zero(T)
-            for k in 1:n
-                kg += k_ref[k, j] * gvec[k]
-            end
-            ktKikx_j = kg * kg * mui + 2 * kg * kxy[j] + kxy[j] * kxy[j] * inv_mui
-            alc_sum += gp.phi * ktKikx_j / df
-        end
-
-        # Average over reference points and apply scaling
-        alc[i] = alc_sum * df_rat / n_ref
-    end
-
-    return alc
-end
-
-"""
-    mspe_gp(gp, Xcand, Xref)
-
-Compute Mean Squared Prediction Error (MSPE) acquisition values.
-
-MSPE is related to ALC and includes the current prediction variance.
-
-# Arguments
-- `gp::GP`: Gaussian Process model
-- `Xcand::Matrix`: candidate points (n_cand x m)
-- `Xref::Matrix`: reference points (n_ref x m)
-
-# Returns
-- `Vector`: MSPE values for each candidate point
-"""
-function mspe_gp(gp::GP{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
-    n = size(gp.X, 1)
-    n_cand = size(Xcand, 1)
-    df = T(n)
-
-    # Compute ALC first
-    alc_vals = alc_gp(gp, Xcand, Xref)
-
-    # Predict at reference locations to get s2avg
-    pred_ref = pred_gp(gp, Xref; lite=true)
-    s2avg = mean(pred_ref.s2)
-
-    # Compute MSPE scaling factors
-    dnp = (df + one(T)) / (df - one(T))
-    dnp2 = dnp * (df - 2) / df
-
-    # MSPE = dnp * s2avg - dnp2 * alc
-    mspe = Vector{T}(undef, n_cand)
-    for i in 1:n_cand
-        mspe[i] = dnp * s2avg - dnp2 * alc_vals[i]
-    end
-
-    return mspe
-end
-
-# ============================================================================
-# Acquisition functions for GPModel (AbstractGPs-backed)
-# ============================================================================
-
-"""
-    alc_gp_model(gp, Xcand, Xref)
-
-Compute Active Learning Cohn (ALC) acquisition values for GPModel.
-
-# Arguments
-- `gp::GPModel`: Gaussian Process model
-- `Xcand::Matrix`: candidate points (n_cand x m)
-- `Xref::Matrix`: reference points (n_ref x m)
-
-# Returns
-- `Vector`: ALC values for each candidate point
-"""
-function alc_gp_model(gp::GPModel{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
-    n = size(gp.X, 1)
-    n_cand = size(Xcand, 1)
-    n_ref = size(Xref, 1)
     df = T(n)
 
     # Pre-compute k(X, Xref) using kernel
@@ -226,28 +85,30 @@ function alc_gp_model(gp::GPModel{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {
 end
 
 """
-    mspe_gp_model(gp, Xcand, Xref)
+    mspe_gp(gp, Xcand, Xref)
 
-Compute Mean Squared Prediction Error (MSPE) acquisition values for GPModel.
+Compute Mean Squared Prediction Error (MSPE) acquisition values.
+
+MSPE is related to ALC and includes the current prediction variance.
 
 # Arguments
-- `gp::GPModel`: Gaussian Process model
+- `gp::GP`: Gaussian Process model
 - `Xcand::Matrix`: candidate points (n_cand x m)
 - `Xref::Matrix`: reference points (n_ref x m)
 
 # Returns
 - `Vector`: MSPE values for each candidate point
 """
-function mspe_gp_model(gp::GPModel{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
+function mspe_gp(gp::GP{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
     n = size(gp.X, 1)
     n_cand = size(Xcand, 1)
     df = T(n)
 
     # Compute ALC first
-    alc_vals = alc_gp_model(gp, Xcand, Xref)
+    alc_vals = alc_gp(gp, Xcand, Xref)
 
     # Predict at reference locations
-    pred_ref = pred_gp_model(gp, Xref; lite=true)
+    pred_ref = pred_gp(gp, Xref; lite=true)
     s2avg = mean(pred_ref.s2)
 
     # Compute MSPE scaling factors

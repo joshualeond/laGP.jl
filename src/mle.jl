@@ -85,6 +85,10 @@ function _quantile_type7(x_sorted::Vector{T}, p::Real) where {T}
     end
 end
 
+# ============================================================================
+# Isotropic GP MLE functions
+# ============================================================================
+
 """
     mle_gp(gp, param; tmax, tmin=sqrt(eps(T)))
 
@@ -116,8 +120,7 @@ function mle_gp(gp::GP{T}, param::Symbol; tmax::Real, tmin::Real=sqrt(eps(T))) w
         return -llik_gp(gp)
     end
 
-    # Grid search to find approximate minimum region (handles multimodal likelihood)
-    # Use log-spaced grid for better coverage
+    # Grid search + Brent refinement
     n_grid = 20
     log_tmin = log(tmin_T)
     log_tmax = log(tmax_T)
@@ -133,33 +136,30 @@ function mle_gp(gp::GP{T}, param::Symbol; tmax::Real, tmin::Real=sqrt(eps(T))) w
         end
     end
 
-    # Find the range around the best grid point for Brent refinement
     best_idx = findfirst(==(best_val), grid_vals)
     search_min = best_idx > 1 ? grid_vals[best_idx - 1] : tmin_T
     search_max = best_idx < n_grid ? grid_vals[best_idx + 1] : tmax_T
 
-    # Use Brent's method to refine in the local region
     result = optimize(neg_llik, search_min, search_max, Brent())
 
-    # Get optimal value
     opt_val = Optim.minimizer(result)
     its = n_grid + result.iterations
 
-    # Ensure GP is updated with optimal value
     if param == :d
         update_gp!(gp; d=opt_val)
-        return (d=gp.d, g=gp.g, its=its, msg="converged")
     else
         update_gp!(gp; g=opt_val)
-        return (d=gp.d, g=gp.g, its=its, msg="converged")
     end
+
+    return (d=gp.d, g=gp.g, its=its, msg="converged")
 end
 
 """
-    jmle_gp(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
+    jmle_gp(gp; drange, grange, maxit=100, verb=0, use_ad=true, dab=(3/2, nothing), gab=(3/2, nothing))
 
-Joint MLE optimization of d and g using L-BFGS-B with analytical gradients
-and Inverse-Gamma priors (MAP estimation).
+Joint MLE optimization of d and g for GP.
+
+Can use either Zygote AD gradients (use_ad=true) or manual gradients (use_ad=false).
 
 # Arguments
 - `gp::GP`: Gaussian Process model (modified in-place)
@@ -167,20 +167,20 @@ and Inverse-Gamma priors (MAP estimation).
 - `grange::Tuple`: (min, max) range for g
 - `maxit::Int`: maximum iterations
 - `verb::Int`: verbosity level
-- `dab::Tuple`: (shape, scale) for d prior; if scale=nothing, computed from range
-- `gab::Tuple`: (shape, scale) for g prior; if scale=nothing, computed from range
+- `use_ad::Bool`: use Zygote automatic differentiation for gradients
+- `dab::Tuple`: (shape, scale) for d prior
+- `gab::Tuple`: (shape, scale) for g prior
 
 # Returns
 - `NamedTuple`: (d=..., g=..., tot_its=..., msg=...)
 """
 function jmle_gp(gp::GP{T}; drange::Tuple{Real,Real}, grange::Tuple{Real,Real},
-                 maxit::Int=100, verb::Int=0,
-                 dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
-                 gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
+                  maxit::Int=100, verb::Int=0, use_ad::Bool=true,
+                  dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
+                  gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
     # Compute prior parameters
     d_shape = T(dab[1])
     d_scale = if dab[2] === nothing
-        # Use geometric mean of range as prior center
         compute_prior_scale(T(sqrt(drange[1] * drange[2])), d_shape)
     else
         T(dab[2])
@@ -199,19 +199,26 @@ function jmle_gp(gp::GP{T}; drange::Tuple{Real,Real}, grange::Tuple{Real,Real},
     lower = [log(T(drange[1])), log(T(grange[1]))]
     upper = [log(T(drange[2])), log(T(grange[2]))]
 
-    # Objective: negative log-POSTERIOR (likelihood + prior)
+    # Objective: negative log-POSTERIOR
     function neg_posterior!(F, G, x)
-        # Transform from log space
         d_new = exp(x[1])
         g_new = exp(x[2])
 
         update_gp!(gp; d=d_new, g=g_new)
 
         if G !== nothing
-            grad = dllik_gp(gp)
-            # Likelihood gradients (with chain rule for log transform)
-            G[1] = -grad.dlld * d_new
-            G[2] = -grad.dllg * g_new
+            if use_ad
+                # Use Zygote AD
+                params = T[d_new, g_new]
+                ad_grad = Zygote.gradient(p -> neg_llik_ad(p, gp.X, gp.Z; separable=false), params)[1]
+                G[1] = ad_grad[1] * d_new  # Chain rule for log transform
+                G[2] = ad_grad[2] * g_new
+            else
+                # Use manual gradients
+                grad = dllik_gp(gp)
+                G[1] = -grad.dlld * d_new
+                G[2] = -grad.dllg * g_new
+            end
 
             # Add prior gradients
             G[1] += -dlog_invgamma(d_new, d_shape, d_scale) * d_new
@@ -220,20 +227,17 @@ function jmle_gp(gp::GP{T}; drange::Tuple{Real,Real}, grange::Tuple{Real,Real},
 
         if F !== nothing
             nll = -llik_gp(gp)
-            # Add negative log-prior terms
             nll += -log_invgamma(d_new, d_shape, d_scale)
             nll += -log_invgamma(g_new, g_shape, g_scale)
             return nll
         end
     end
 
-    # L-BFGS-B optimization with relaxed tolerance
     result = optimize(only_fg!(neg_posterior!), lower, upper, x0,
                       Fminbox(LBFGS()),
                       Optim.Options(iterations=maxit, g_tol=T(1e-6),
                                     show_trace=(verb > 0)))
 
-    # Ensure GP is updated with final values
     final_x = minimizer(result)
     update_gp!(gp; d=exp(final_x[1]), g=exp(final_x[2]))
 
@@ -416,25 +420,25 @@ function mle_gp_sep(gp::GPsep{T}, param::Symbol, dim::Int=1;
 end
 
 """
-    jmle_gp_sep(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
+    jmle_gp_sep(gp; drange, grange, maxit=100, verb=0, use_ad=true, dab=(3/2, nothing), gab=(3/2, nothing))
 
-Joint MLE optimization of all lengthscales and nugget using L-BFGS-B with
-analytical gradients and Inverse-Gamma priors (MAP estimation).
+Joint MLE optimization of lengthscales and nugget for GPsep.
 
 # Arguments
 - `gp::GPsep`: Separable Gaussian Process model (modified in-place)
-- `drange::Tuple`: (min, max) range for each d[k], or Vector of tuples per dimension
+- `drange::Union{Tuple,Vector}`: range for d parameters
 - `grange::Tuple`: (min, max) range for g
 - `maxit::Int`: maximum iterations
 - `verb::Int`: verbosity level
-- `dab::Tuple`: (shape, scale) for d prior; if scale=nothing, computed from range
-- `gab::Tuple`: (shape, scale) for g prior; if scale=nothing, computed from range
+- `use_ad::Bool`: use Zygote automatic differentiation for gradients
+- `dab::Tuple`: (shape, scale) for d prior
+- `gab::Tuple`: (shape, scale) for g prior
 
 # Returns
 - `NamedTuple`: (d=..., g=..., tot_its=..., msg=...)
 """
 function jmle_gp_sep(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple{Real,Real}}},
-                      grange::Tuple{Real,Real}, maxit::Int=100, verb::Int=0,
+                      grange::Tuple{Real,Real}, maxit::Int=100, verb::Int=0, use_ad::Bool=true,
                       dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
                       gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
     m = length(gp.d)
@@ -450,7 +454,6 @@ function jmle_gp_sep(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple
     # Compute prior parameters
     d_shape = T(dab[1])
     d_scales = if dab[2] === nothing
-        # Use geometric mean of range as prior center (like R)
         [compute_prior_scale(T(sqrt(r[1] * r[2])), d_shape) for r in d_ranges]
     else
         fill(T(dab[2]), m)
@@ -463,8 +466,7 @@ function jmle_gp_sep(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple
         T(gab[2])
     end
 
-    # Parameter vector: [d[1], ..., d[m], g]
-    # Optimize in LOG SPACE for better conditioning
+    # Parameter vector: [d[1], ..., d[m], g] in LOG SPACE
     x0 = [log.(gp.d); log(gp.g)]
 
     lower = [log(T(r[1])) for r in d_ranges]
@@ -473,21 +475,28 @@ function jmle_gp_sep(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple
     upper = [log(T(r[2])) for r in d_ranges]
     push!(upper, log(T(grange[2])))
 
-    # Objective: negative log-POSTERIOR (likelihood + prior)
+    # Objective: negative log-POSTERIOR
     function neg_posterior!(F, G, x)
-        # Transform from log space
         d_new = exp.(x[1:m])
         g_new = exp(x[m+1])
 
         update_gp_sep!(gp; d=d_new, g=g_new)
 
         if G !== nothing
-            grad = dllik_gp_sep(gp)
-            # Likelihood gradients (with chain rule for log transform)
-            G[1:m] .= -grad.dlld .* d_new
-            G[m+1] = -grad.dllg * g_new
+            if use_ad
+                # Use Zygote AD
+                params = T[d_new..., g_new]
+                ad_grad = Zygote.gradient(p -> neg_llik_ad(p, gp.X, gp.Z; separable=true), params)[1]
+                G[1:m] .= ad_grad[1:m] .* d_new
+                G[m+1] = ad_grad[m+1] * g_new
+            else
+                # Use manual gradients
+                grad = dllik_gp_sep(gp)
+                G[1:m] .= -grad.dlld .* d_new
+                G[m+1] = -grad.dllg * g_new
+            end
 
-            # Add prior gradients (also with chain rule)
+            # Add prior gradients
             for k in 1:m
                 G[k] += -dlog_invgamma(d_new[k], d_shape, d_scales[k]) * d_new[k]
             end
@@ -496,7 +505,6 @@ function jmle_gp_sep(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple
 
         if F !== nothing
             nll = -llik_gp_sep(gp)
-            # Add negative log-prior terms
             for k in 1:m
                 nll += -log_invgamma(d_new[k], d_shape, d_scales[k])
             end
@@ -505,13 +513,11 @@ function jmle_gp_sep(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple
         end
     end
 
-    # L-BFGS-B optimization with relaxed tolerance
     result = optimize(only_fg!(neg_posterior!), lower, upper, x0,
                       Fminbox(LBFGS()),
                       Optim.Options(iterations=maxit, g_tol=T(1e-6),
                                     show_trace=(verb > 0)))
 
-    # Ensure GP is updated with final values
     final_x = minimizer(result)
     update_gp_sep!(gp; d=exp.(final_x[1:m]), g=exp(final_x[m+1]))
 
@@ -660,270 +666,4 @@ Compute gradient of log-likelihood using Zygote automatic differentiation.
 function dllik_ad(params::Vector{T}, X::Matrix{T}, Z::Vector{T}; separable::Bool=false) where {T}
     grad = Zygote.gradient(p -> neg_llik_ad(p, X, Z; separable=separable), params)[1]
     return -grad  # Return gradient of log-likelihood (not negative)
-end
-
-# ============================================================================
-# MLE Functions for GPModel (AbstractGPs-backed)
-# ============================================================================
-
-"""
-    mle_gp_model(gp, param; tmax, tmin=sqrt(eps(T)))
-
-Optimize a single GPModel hyperparameter via maximum likelihood.
-
-# Arguments
-- `gp::GPModel`: Gaussian Process model (modified in-place)
-- `param::Symbol`: parameter to optimize (:d or :g)
-- `tmax::Real`: maximum value for parameter (required)
-- `tmin::Real`: minimum value for parameter (default: sqrt(eps(T)), matching R's behavior)
-
-# Returns
-- `NamedTuple`: (d=..., g=..., its=..., msg=...) optimization result
-"""
-function mle_gp_model(gp::GPModel{T}, param::Symbol; tmax::Real, tmin::Real=sqrt(eps(T))) where {T}
-    @assert param in (:d, :g) "param must be :d or :g"
-    @assert tmin < tmax "tmin must be less than tmax"
-
-    tmin_T = T(tmin)
-    tmax_T = T(tmax)
-
-    # Objective function: negative log-likelihood
-    function neg_llik(x)
-        if param == :d
-            update_gp_model!(gp; d=x)
-        else
-            update_gp_model!(gp; g=x)
-        end
-        return -llik_gp_model(gp)
-    end
-
-    # Grid search + Brent refinement
-    n_grid = 20
-    log_tmin = log(tmin_T)
-    log_tmax = log(tmax_T)
-    grid_vals = [exp(log_tmin + (log_tmax - log_tmin) * i / (n_grid - 1)) for i in 0:(n_grid - 1)]
-
-    best_val = grid_vals[1]
-    best_neg_llik = neg_llik(best_val)
-    for val in grid_vals[2:end]
-        nll = neg_llik(val)
-        if nll < best_neg_llik
-            best_neg_llik = nll
-            best_val = val
-        end
-    end
-
-    best_idx = findfirst(==(best_val), grid_vals)
-    search_min = best_idx > 1 ? grid_vals[best_idx - 1] : tmin_T
-    search_max = best_idx < n_grid ? grid_vals[best_idx + 1] : tmax_T
-
-    result = optimize(neg_llik, search_min, search_max, Brent())
-
-    opt_val = Optim.minimizer(result)
-    its = n_grid + result.iterations
-
-    if param == :d
-        update_gp_model!(gp; d=opt_val)
-    else
-        update_gp_model!(gp; g=opt_val)
-    end
-
-    return (d=gp.d, g=gp.g, its=its, msg="converged")
-end
-
-"""
-    jmle_gp_model(gp; drange, grange, maxit=100, verb=0, use_ad=true, dab=(3/2, nothing), gab=(3/2, nothing))
-
-Joint MLE optimization of d and g for GPModel.
-
-Can use either Zygote AD gradients (use_ad=true) or manual gradients (use_ad=false).
-
-# Arguments
-- `gp::GPModel`: Gaussian Process model (modified in-place)
-- `drange::Tuple`: (min, max) range for d
-- `grange::Tuple`: (min, max) range for g
-- `maxit::Int`: maximum iterations
-- `verb::Int`: verbosity level
-- `use_ad::Bool`: use Zygote automatic differentiation for gradients
-- `dab::Tuple`: (shape, scale) for d prior
-- `gab::Tuple`: (shape, scale) for g prior
-
-# Returns
-- `NamedTuple`: (d=..., g=..., tot_its=..., msg=...)
-"""
-function jmle_gp_model(gp::GPModel{T}; drange::Tuple{Real,Real}, grange::Tuple{Real,Real},
-                        maxit::Int=100, verb::Int=0, use_ad::Bool=true,
-                        dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
-                        gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
-    # Compute prior parameters
-    d_shape = T(dab[1])
-    d_scale = if dab[2] === nothing
-        compute_prior_scale(T(sqrt(drange[1] * drange[2])), d_shape)
-    else
-        T(dab[2])
-    end
-
-    g_shape = T(gab[1])
-    g_scale = if gab[2] === nothing
-        compute_prior_scale(T(sqrt(grange[1] * grange[2])), g_shape)
-    else
-        T(gab[2])
-    end
-
-    # Parameter vector: [d, g] - optimize in LOG SPACE
-    x0 = [log(gp.d), log(gp.g)]
-
-    lower = [log(T(drange[1])), log(T(grange[1]))]
-    upper = [log(T(drange[2])), log(T(grange[2]))]
-
-    # Objective: negative log-POSTERIOR
-    function neg_posterior!(F, G, x)
-        d_new = exp(x[1])
-        g_new = exp(x[2])
-
-        update_gp_model!(gp; d=d_new, g=g_new)
-
-        if G !== nothing
-            if use_ad
-                # Use Zygote AD
-                params = T[d_new, g_new]
-                ad_grad = Zygote.gradient(p -> neg_llik_ad(p, gp.X, gp.Z; separable=false), params)[1]
-                G[1] = ad_grad[1] * d_new  # Chain rule for log transform
-                G[2] = ad_grad[2] * g_new
-            else
-                # Use manual gradients
-                grad = dllik_gp_model(gp)
-                G[1] = -grad.dlld * d_new
-                G[2] = -grad.dllg * g_new
-            end
-
-            # Add prior gradients
-            G[1] += -dlog_invgamma(d_new, d_shape, d_scale) * d_new
-            G[2] += -dlog_invgamma(g_new, g_shape, g_scale) * g_new
-        end
-
-        if F !== nothing
-            nll = -llik_gp_model(gp)
-            nll += -log_invgamma(d_new, d_shape, d_scale)
-            nll += -log_invgamma(g_new, g_shape, g_scale)
-            return nll
-        end
-    end
-
-    result = optimize(only_fg!(neg_posterior!), lower, upper, x0,
-                      Fminbox(LBFGS()),
-                      Optim.Options(iterations=maxit, g_tol=T(1e-6),
-                                    show_trace=(verb > 0)))
-
-    final_x = minimizer(result)
-    update_gp_model!(gp; d=exp(final_x[1]), g=exp(final_x[2]))
-
-    return (d=gp.d, g=gp.g, tot_its=result.iterations,
-           msg=converged(result) ? "converged" : "max iterations reached")
-end
-
-"""
-    jmle_gp_model_sep(gp; drange, grange, maxit=100, verb=0, use_ad=true, dab=(3/2, nothing), gab=(3/2, nothing))
-
-Joint MLE optimization of lengthscales and nugget for GPModelSep.
-
-# Arguments
-- `gp::GPModelSep`: Separable Gaussian Process model (modified in-place)
-- `drange::Union{Tuple,Vector}`: range for d parameters
-- `grange::Tuple`: (min, max) range for g
-- `maxit::Int`: maximum iterations
-- `verb::Int`: verbosity level
-- `use_ad::Bool`: use Zygote automatic differentiation for gradients
-- `dab::Tuple`: (shape, scale) for d prior
-- `gab::Tuple`: (shape, scale) for g prior
-
-# Returns
-- `NamedTuple`: (d=..., g=..., tot_its=..., msg=...)
-"""
-function jmle_gp_model_sep(gp::GPModelSep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple{Real,Real}}},
-                            grange::Tuple{Real,Real}, maxit::Int=100, verb::Int=0, use_ad::Bool=true,
-                            dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
-                            gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
-    m = length(gp.d)
-
-    # Convert drange to per-dimension ranges
-    if drange isa Tuple
-        d_ranges = [drange for _ in 1:m]
-    else
-        @assert length(drange) == m "drange must have $(m) elements"
-        d_ranges = drange
-    end
-
-    # Compute prior parameters
-    d_shape = T(dab[1])
-    d_scales = if dab[2] === nothing
-        [compute_prior_scale(T(sqrt(r[1] * r[2])), d_shape) for r in d_ranges]
-    else
-        fill(T(dab[2]), m)
-    end
-
-    g_shape = T(gab[1])
-    g_scale = if gab[2] === nothing
-        compute_prior_scale(T(sqrt(grange[1] * grange[2])), g_shape)
-    else
-        T(gab[2])
-    end
-
-    # Parameter vector: [d[1], ..., d[m], g] in LOG SPACE
-    x0 = [log.(gp.d); log(gp.g)]
-
-    lower = [log(T(r[1])) for r in d_ranges]
-    push!(lower, log(T(grange[1])))
-
-    upper = [log(T(r[2])) for r in d_ranges]
-    push!(upper, log(T(grange[2])))
-
-    # Objective: negative log-POSTERIOR
-    function neg_posterior!(F, G, x)
-        d_new = exp.(x[1:m])
-        g_new = exp(x[m+1])
-
-        update_gp_model_sep!(gp; d=d_new, g=g_new)
-
-        if G !== nothing
-            if use_ad
-                # Use Zygote AD
-                params = T[d_new..., g_new]
-                ad_grad = Zygote.gradient(p -> neg_llik_ad(p, gp.X, gp.Z; separable=true), params)[1]
-                G[1:m] .= ad_grad[1:m] .* d_new
-                G[m+1] = ad_grad[m+1] * g_new
-            else
-                # Use manual gradients
-                grad = dllik_gp_model_sep(gp)
-                G[1:m] .= -grad.dlld .* d_new
-                G[m+1] = -grad.dllg * g_new
-            end
-
-            # Add prior gradients
-            for k in 1:m
-                G[k] += -dlog_invgamma(d_new[k], d_shape, d_scales[k]) * d_new[k]
-            end
-            G[m+1] += -dlog_invgamma(g_new, g_shape, g_scale) * g_new
-        end
-
-        if F !== nothing
-            nll = -llik_gp_model_sep(gp)
-            for k in 1:m
-                nll += -log_invgamma(d_new[k], d_shape, d_scales[k])
-            end
-            nll += -log_invgamma(g_new, g_shape, g_scale)
-            return nll
-        end
-    end
-
-    result = optimize(only_fg!(neg_posterior!), lower, upper, x0,
-                      Fminbox(LBFGS()),
-                      Optim.Options(iterations=maxit, g_tol=T(1e-6),
-                                    show_trace=(verb > 0)))
-
-    final_x = minimizer(result)
-    update_gp_model_sep!(gp; d=exp.(final_x[1:m]), g=exp(final_x[m+1]))
-
-    return (d=copy(gp.d), g=gp.g, tot_its=result.iterations,
-           msg=converged(result) ? "converged" : "max iterations reached")
 end

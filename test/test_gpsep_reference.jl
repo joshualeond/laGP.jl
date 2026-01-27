@@ -38,13 +38,16 @@ const GPSEP_REF = JSON3.read(
     @testset "Covariance matrix K" begin
         gp = new_gp_sep(X, Z, d, g)
 
+        # Reconstruct K from Cholesky: K = L * L'
+        K_reconstructed = gp.chol.L * gp.chol.U
+
         # Test K matches R computation
-        @test gp.K ≈ ref_K rtol=1e-10
-        @test issymmetric(gp.K)
+        @test K_reconstructed ≈ ref_K rtol=1e-10
+        @test issymmetric(K_reconstructed)
 
         # Check diagonal: K[i,i] = 1 + g
         for i in 1:size(X, 1)
-            @test gp.K[i, i] ≈ 1 + g rtol=1e-10
+            @test K_reconstructed[i, i] ≈ 1 + g rtol=1e-10
         end
     end
 

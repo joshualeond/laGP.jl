@@ -26,8 +26,8 @@ using Test
         @test size(gp.X) == (n, m)
         @test length(gp.Z) == n
         @test length(gp.d) == m
-        @test size(gp.K) == (n, n)
-        @test issymmetric(gp.K)
+        # The GP stores Cholesky factorization instead of K
+        @test size(gp.chol) == (n, n)
     end
 
     @testset "new_gp_sep validation" begin

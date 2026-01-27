@@ -1,41 +1,5 @@
 # Types for laGP.jl
 
-# ============================================================================
-# Legacy Types (preserved for backward compatibility)
-# ============================================================================
-
-"""
-    GP{T<:Real}
-
-Gaussian Process model with isotropic squared-exponential kernel.
-
-# Fields
-- `X::Matrix{T}`: n x m design matrix (n observations, m dimensions)
-- `Z::Vector{T}`: n response values
-- `K::Matrix{T}`: n x n covariance matrix
-- `chol::Cholesky{T}`: Cholesky factorization of K
-- `Ki::Matrix{T}`: K⁻¹ (cached inverse for gradient computation)
-- `KiZ::Vector{T}`: K \\ Z (precomputed for prediction)
-- `dist_sq::Matrix{T}`: cached pairwise squared distances for gradient computation
-- `d::T`: lengthscale parameter
-- `g::T`: nugget parameter
-- `phi::T`: Z' * Ki * Z (used for variance scaling)
-- `ldetK::T`: log determinant of K
-"""
-mutable struct GP{T<:Real}
-    X::Matrix{T}
-    Z::Vector{T}
-    K::Matrix{T}
-    chol::Cholesky{T,Matrix{T}}
-    Ki::Matrix{T}
-    KiZ::Vector{T}
-    dist_sq::Matrix{T}
-    d::T
-    g::T
-    phi::T
-    ldetK::T
-end
-
 """
     GPPrediction{T<:Real}
 
@@ -69,46 +33,7 @@ struct GPPredictionFull{T<:Real}
 end
 
 """
-    GPsep{T<:Real}
-
-Separable Gaussian Process model with anisotropic squared-exponential kernel.
-
-Uses a vector of lengthscales (one per input dimension) to capture varying
-input sensitivities.
-
-# Fields
-- `X::Matrix{T}`: n x m design matrix (n observations, m dimensions)
-- `Z::Vector{T}`: n response values
-- `K::Matrix{T}`: n x n covariance matrix
-- `chol::Cholesky{T}`: Cholesky factorization of K
-- `Ki::Matrix{T}`: K⁻¹ (cached inverse for gradient computation)
-- `KiZ::Vector{T}`: K \\ Z (precomputed for prediction)
-- `dist_sq::Array{T,3}`: cached per-dimension squared distances (n x n x m)
-- `d::Vector{T}`: lengthscale parameters (m elements, one per dimension)
-- `g::T`: nugget parameter
-- `phi::T`: Z' * Ki * Z (used for variance scaling)
-- `ldetK::T`: log determinant of K
-"""
-mutable struct GPsep{T<:Real}
-    X::Matrix{T}
-    Z::Vector{T}
-    K::Matrix{T}
-    chol::Cholesky{T,Matrix{T}}
-    Ki::Matrix{T}
-    KiZ::Vector{T}
-    dist_sq::Array{T,3}
-    d::Vector{T}
-    g::T
-    phi::T
-    ldetK::T
-end
-
-# ============================================================================
-# AbstractGPs-backed Types (new implementation)
-# ============================================================================
-
-"""
-    GPModel{T<:Real, K}
+    GP{T<:Real, K}
 
 Gaussian Process model backed by AbstractGPs.jl with isotropic squared-exponential kernel.
 
@@ -130,7 +55,7 @@ laGP-specific quantities needed for the concentrated likelihood formula.
 The AbstractGPs posterior can be reconstructed from (X, Z, kernel, g) when needed.
 We cache the Cholesky and derived quantities for efficient repeated computations.
 """
-mutable struct GPModel{T<:Real, K}
+mutable struct GP{T<:Real, K}
     X::Matrix{T}
     Z::Vector{T}
     kernel::K
@@ -143,7 +68,7 @@ mutable struct GPModel{T<:Real, K}
 end
 
 """
-    GPModelSep{T<:Real, K}
+    GPsep{T<:Real, K}
 
 Separable Gaussian Process model backed by AbstractGPs.jl with anisotropic kernel.
 
@@ -161,7 +86,7 @@ input sensitivities.
 - `phi::T`: Z' * Ki * Z (used for variance scaling)
 - `ldetK::T`: log determinant of K (used for likelihood)
 """
-mutable struct GPModelSep{T<:Real, K}
+mutable struct GPsep{T<:Real, K}
     X::Matrix{T}
     Z::Vector{T}
     kernel::K
@@ -174,4 +99,4 @@ mutable struct GPModelSep{T<:Real, K}
 end
 
 # Union type for any GP model (useful for generic functions)
-const AnyGPModel{T} = Union{GP{T}, GPsep{T}, GPModel{T}, GPModelSep{T}} where T
+const AnyGP{T} = Union{GP{T}, GPsep{T}} where T
