@@ -17,6 +17,7 @@ makedocs(
             "Local Approximate GP Demo" => "examples/demo.md",
             "Motorcycle Crash Test" => "examples/motorcycle.md",
             "Posterior Sampling" => "examples/sinusoidal.md",
+            "Multivariate Inputs (ARD)" => "examples/multivariate.md",
             "Wing Weight Surrogate" => "examples/surrogates.md",
             "Satellite Drag Modeling" => "examples/satellite.md",
         ],
