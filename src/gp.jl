@@ -448,27 +448,9 @@ function extend_gp!(gp::GP{T}, x_new::AbstractVector{T}, z_new::T) where {T}
         λ = sqrt(λ_sq)
     end
 
-    # Build new Cholesky factor L_new = [L 0; lᵀ λ]
-    n_new = n + 1
-    L_new = Matrix{T}(undef, n_new, n_new)
-
-    # Copy existing L into upper-left block
-    @inbounds for j in 1:n
-        for i in 1:n
-            L_new[i, j] = L[i, j]
-        end
-        L_new[n_new, j] = l[j]  # Last row is lᵀ
-    end
-
-    # Fill last column (zeros above diagonal, λ on diagonal)
-    @inbounds for i in 1:n
-        L_new[i, n_new] = zero(T)
-    end
-    L_new[n_new, n_new] = λ
-
-    # Create new Cholesky factorization
-    # Note: We construct a Cholesky object from the factor directly
-    chol_new = Cholesky(L_new, 'L', 0)
+    # Build new Cholesky factor L_new = [L 0; lᵀ λ] using block concatenation
+    L_new = [L zeros(T, n); l' λ]
+    gp.chol = Cholesky(L_new, 'L', 0)
 
     # Update Ki incrementally using block matrix inversion formula
     # For K_new = [K k; kᵀ κ+g], Ki_new can be computed from Ki:
@@ -485,63 +467,35 @@ function extend_gp!(gp::GP{T}, x_new::AbstractVector{T}, z_new::T) where {T}
     end
     inv_s = one(T) / s
 
-    Ki_new = Matrix{T}(undef, n_new, n_new)
-    @inbounds for j in 1:n
-        for i in 1:n
-            Ki_new[i, j] = gp.Ki[i, j] + v[i] * v[j] * inv_s
-        end
-        Ki_new[n_new, j] = -v[j] * inv_s
-        Ki_new[j, n_new] = -v[j] * inv_s
-    end
-    Ki_new[n_new, n_new] = inv_s
+    # Build Ki_new using efficient in-place update of upper-left block
+    # followed by block concatenation for new row/column
+    v_scaled = v .* inv_s
+    gp.Ki .+= v * v_scaled'  # Update upper-left block in-place
+    gp.Ki = [gp.Ki -v_scaled; -v_scaled' inv_s]
 
-    # Update X and Z by appending new point
-    X_new = Matrix{T}(undef, n_new, m)
-    @inbounds for j in 1:m
-        for i in 1:n
-            X_new[i, j] = gp.X[i, j]
-        end
-        X_new[n_new, j] = x_new[j]
-    end
+    # Update X by appending new row
+    gp.X = vcat(gp.X, x_new')
 
-    Z_new = Vector{T}(undef, n_new)
-    @inbounds for i in 1:n
-        Z_new[i] = gp.Z[i]
-    end
-    Z_new[n_new] = z_new
+    # Update Z by appending new value
+    push!(gp.Z, z_new)
 
-    # Update KiZ: KiZ_new = Ki_new * Z_new
-    # Using block structure: KiZ_new = [(Ki + v*vᵀ/s)*Z - v*z_new/s; -vᵀZ/s + z_new/s]
-    KiZ_new = Vector{T}(undef, n_new)
-    vᵀZ = dot(v, gp.Z)
-    @inbounds for i in 1:n
-        KiZ_new[i] = gp.KiZ[i] + v[i] * (vᵀZ - z_new) * inv_s
-    end
-    KiZ_new[n_new] = (z_new - vᵀZ) * inv_s
+    # Update KiZ incrementally using block structure
+    vᵀZ = dot(v, gp.Z[1:n])
+    gp.KiZ .+= v .* ((vᵀZ - z_new) * inv_s)
+    push!(gp.KiZ, (z_new - vᵀZ) * inv_s)
 
     # Update phi = Z_new' * Ki_new * Z_new
-    phi_new = dot(Z_new, KiZ_new)
+    gp.phi = dot(gp.Z, gp.KiZ)
 
     # Update log determinant: log|K_new| = log|K| + 2*log(λ)
-    ldetK_new = gp.ldetK + 2 * log(λ)
+    gp.ldetK += 2 * log(λ)
 
     # Update trace of Ki incrementally:
     # tr(Ki_new) = tr(Ki) + tr(v*v'/s) + 1/s
     #            = tr(Ki) + (v'*v)/s + 1/s
     #            = tr(Ki) + (dot(v,v) + 1) / s
     v_dot_v = dot(v, v)
-    tr_Ki_new = gp.tr_Ki + (v_dot_v + one(T)) * inv_s
-
-    # Update GP fields
-    gp.X = X_new
-    gp.Z = Z_new
-    gp.chol = chol_new
-    gp.Ki = Ki_new
-    gp.KiZ = KiZ_new
-    gp.phi = phi_new
-    gp.ldetK = ldetK_new
-    gp.tr_Ki = tr_Ki_new
-    # kernel remains unchanged (same d)
+    gp.tr_Ki += (v_dot_v + one(T)) * inv_s
 
     return gp
 end
@@ -871,6 +825,129 @@ function update_gp_sep!(gp::GPsep{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
         # Recompute trace of Ki
         gp.tr_Ki = tr(gp.Ki)
     end
+
+    return gp
+end
+
+"""
+    extend_gp_sep!(gp, x_new, z_new)
+
+Extend a separable GP with a new observation using O(n²) incremental Cholesky update.
+
+This is much faster than rebuilding the GP from scratch when sequentially
+adding points, as it avoids the O(n³) full Cholesky factorization.
+
+# Mathematical Background
+Given existing Cholesky L where K = LLᵀ, when adding a new point:
+
+```
+K_new = [K    k  ]
+        [kᵀ   κ  ]
+```
+
+The updated Cholesky is:
+```
+L_new = [L    0]
+        [lᵀ   λ]
+```
+
+Where:
+- l = L⁻¹ k (forward solve, O(n²))
+- λ = sqrt(κ + g - lᵀl)
+
+# Arguments
+- `gp::GPsep`: Separable Gaussian Process model to extend
+- `x_new::AbstractVector`: new input point (length m)
+- `z_new::Real`: new output value
+
+# Returns
+- `gp`: The modified GP (for convenience, same object as input)
+"""
+function extend_gp_sep!(gp::GPsep{T}, x_new::AbstractVector{T}, z_new::T) where {T}
+    n = size(gp.X, 1)
+    m = size(gp.X, 2)
+
+    @assert length(x_new) == m "x_new must have same dimension as GP inputs"
+
+    # Compute kernel values between new point and existing points
+    # Separable kernel: k[i] = exp(-sum((X[i,j] - x_new[j])^2 / d[j] for j in 1:m))
+    k = Vector{T}(undef, n)
+    @inbounds for i in 1:n
+        weighted_dist_sq = zero(T)
+        for j in 1:m
+            diff = gp.X[i, j] - x_new[j]
+            weighted_dist_sq += diff * diff / gp.d[j]
+        end
+        k[i] = exp(-weighted_dist_sq)
+    end
+
+    # κ = kernel(x_new, x_new) = 1 (self-covariance without nugget)
+    κ = one(T)
+
+    # Forward solve: l = L⁻¹ k using existing Cholesky
+    # This is O(n²) via forward substitution
+    L = gp.chol.L
+    l = L \ k
+
+    # Compute λ = sqrt(κ + g - lᵀl)
+    l_dot_l = dot(l, l)
+    λ_sq = κ + gp.g - l_dot_l
+
+    # Handle numerical issues - if λ² ≤ 0, the matrix would be non-positive-definite
+    if λ_sq <= zero(T)
+        λ = sqrt(eps(T))  # Small positive value to maintain positive-definiteness
+    else
+        λ = sqrt(λ_sq)
+    end
+
+    # Build new Cholesky factor L_new = [L 0; lᵀ λ] using block concatenation
+    L_new = [L zeros(T, n); l' λ]
+    gp.chol = Cholesky(L_new, 'L', 0)
+
+    # Update Ki incrementally using block matrix inversion formula
+    # For K_new = [K k; kᵀ κ+g], Ki_new can be computed from Ki:
+    # Let v = Ki * k, s = κ + g - kᵀ * v = λ²
+    # Then:
+    #   Ki_new = [Ki + v*vᵀ/s   -v/s  ]
+    #            [   -vᵀ/s       1/s  ]
+    v = gp.Ki * k
+    s = λ_sq  # Already computed as κ + g - lᵀl (note: lᵀl = kᵀ Ki k when L = chol)
+
+    # Handle case where s is very small
+    if abs(s) < eps(T)
+        s = eps(T)
+    end
+    inv_s = one(T) / s
+
+    # Build Ki_new using efficient in-place update of upper-left block
+    # followed by block concatenation for new row/column
+    v_scaled = v .* inv_s
+    gp.Ki .+= v * v_scaled'  # Update upper-left block in-place
+    gp.Ki = [gp.Ki -v_scaled; -v_scaled' inv_s]
+
+    # Update X by appending new row
+    gp.X = vcat(gp.X, x_new')
+
+    # Update Z by appending new value
+    push!(gp.Z, z_new)
+
+    # Update KiZ incrementally using block structure
+    vᵀZ = dot(v, gp.Z[1:n])
+    gp.KiZ .+= v .* ((vᵀZ - z_new) * inv_s)
+    push!(gp.KiZ, (z_new - vᵀZ) * inv_s)
+
+    # Update phi = Z_new' * Ki_new * Z_new
+    gp.phi = dot(gp.Z, gp.KiZ)
+
+    # Update log determinant: log|K_new| = log|K| + 2*log(λ)
+    gp.ldetK += 2 * log(λ)
+
+    # Update trace of Ki incrementally:
+    # tr(Ki_new) = tr(Ki) + tr(v*v'/s) + 1/s
+    #            = tr(Ki) + (v'*v)/s + 1/s
+    #            = tr(Ki) + (dot(v,v) + 1) / s
+    v_dot_v = dot(v, v)
+    gp.tr_Ki += (v_dot_v + one(T)) * inv_s
 
     return gp
 end

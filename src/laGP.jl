@@ -36,6 +36,7 @@ export llik_gp_sep
 export dllik_gp_sep
 export d2llik_gp_sep_nug
 export update_gp_sep!
+export extend_gp_sep!
 
 # MLE functions (isotropic)
 export mle_gp
