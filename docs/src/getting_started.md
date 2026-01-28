@@ -59,10 +59,10 @@ Optimize hyperparameters using MLE:
 
 ```julia
 # Single parameter optimization
-mle_gp(gp, :d; tmax=d_range.max)  # optimize lengthscale only
+mle_gp!(gp, :d; tmax=d_range.max)  # optimize lengthscale only
 
 # Joint MLE of both parameters
-jmle_gp(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
+jmle_gp!(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
 
 println("Optimized d: ", gp.d)
 println("Optimized g: ", gp.g)
@@ -74,7 +74,7 @@ For separable GPs:
 d_range_sep = darg_sep(X)
 gp_sep = new_gp_sep(X, Z, [r.start for r in d_range_sep.ranges], g_range.start)
 
-jmle_gp_sep(gp_sep;
+jmle_gp_sep!(gp_sep;
     drange=[(r.min, r.max) for r in d_range_sep.ranges],
     grange=(g_range.min, g_range.max)
 )

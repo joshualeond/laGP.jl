@@ -123,7 +123,7 @@ println("  g = $(round(gp_mle.g, sigdigits=4))")
 println("  log-likelihood = $(round(llik_gp(gp_mle), sigdigits=4))")
 
 # Run joint MLE optimization
-result_mle = jmle_gp(gp_mle;
+result_mle = jmle_gp!(gp_mle;
     drange=(d_range.min, d_range.max),
     grange=(g_range.min, g_range.max),
     maxit=100
@@ -189,7 +189,7 @@ println("  log-likelihood = $(round(llik_gp_sep(gp_sep), sigdigits=4))")
 drange_sep = [(d_sep_range.ranges[i].min, d_sep_range.ranges[i].max) for i in 1:2]
 
 # Run joint MLE optimization for separable GP
-result_sep = jmle_gp_sep(gp_sep;
+result_sep = jmle_gp_sep!(gp_sep;
     drange=drange_sep,
     grange=(g_range.min, g_range.max)
 )

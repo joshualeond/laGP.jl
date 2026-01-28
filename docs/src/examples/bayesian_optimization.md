@@ -17,7 +17,7 @@ Bayesian optimization is a sequential strategy for finding the optimum of expens
 |---------|------------------------|------------------|
 | GP Backend | Custom/GPs.jl | AbstractGPs.jl |
 | Acquisition | Built-in UCB, EI, etc. | Manual UCB implementation |
-| Hyperparameters | Various methods | MLE via `mle_gp()` |
+| Hyperparameters | Various methods | MLE via `mle_gp!()` |
 | Optimization | Integrated loop | Manual loop |
 
 ## Setup
@@ -88,7 +88,7 @@ for iter in 1:7
     # Fit GP with MLE
     d_range = darg(X_obs)
     gp = new_gp(X_obs, Y_obs, d_range.start, 1e-6)  # small nugget
-    mle_gp(gp, :d; drange=(d_range.min, d_range.max), tmax=20)
+    mle_gp!(gp, :d; drange=(d_range.min, d_range.max), tmax=20)
 
     # Predict
     pred = pred_gp(gp, X_pred; lite=true)
@@ -105,7 +105,7 @@ end
 
 ### Why Small Nugget?
 
-Since our objective function is deterministic (noise-free), we use a small nugget (1e-6) for near-interpolation. For noisy objectives, increase the nugget or optimize it via `jmle_gp()`.
+Since our objective function is deterministic (noise-free), we use a small nugget (1e-6) for near-interpolation. For noisy objectives, increase the nugget or optimize it via `jmle_gp!()`.
 
 ## Visualization
 
@@ -202,7 +202,7 @@ This basic example can be extended with:
 
 - **Expected Improvement (EI)** acquisition function
 - **Separable/ARD GP** via `new_gp_sep()` for multivariate optimization
-- **Noisy objectives** with larger nugget optimized via `jmle_gp()`
+- **Noisy objectives** with larger nugget optimized via `jmle_gp!()`
 - **Batch optimization** by selecting multiple points per iteration
 
 ## See Also

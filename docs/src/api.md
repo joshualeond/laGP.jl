@@ -32,8 +32,8 @@ update_gp_sep!
 ## MLE Functions (Isotropic)
 
 ```@docs
-mle_gp
-jmle_gp
+mle_gp!
+jmle_gp!
 darg
 garg
 ```
@@ -41,8 +41,8 @@ garg
 ## MLE Functions (Separable)
 
 ```@docs
-mle_gp_sep
-jmle_gp_sep
+mle_gp_sep!
+jmle_gp_sep!
 darg_sep
 ```
 

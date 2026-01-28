@@ -335,7 +335,7 @@ println("\nFitting isotropic GP model...")
 gp_iso = new_gp(X, Y, d_range.start, g_range.start)
 println("Initial log-likelihood: $(round(llik_gp(gp_iso), digits=2))")
 
-jmle_gp(gp_iso; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
+jmle_gp!(gp_iso; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
 println("After MLE: d=$(round(gp_iso.d, sigdigits=4)), g=$(round(gp_iso.g, sigdigits=4))")
 println("Final log-likelihood: $(round(llik_gp(gp_iso), digits=2))")
 
@@ -357,7 +357,7 @@ println("\nFitting separable GP model...")
 gp_sep = new_gp_sep(X, Y, d_start_sep, g_range.start)
 println("Initial log-likelihood: $(round(llik_gp_sep(gp_sep), digits=2))")
 
-jmle_gp_sep(gp_sep; drange=d_ranges_sep, grange=(g_range.min, g_range.max))
+jmle_gp_sep!(gp_sep; drange=d_ranges_sep, grange=(g_range.min, g_range.max))
 println("After MLE:")
 println("  Lengthscales d:")
 for (j, name) in enumerate(var_names)

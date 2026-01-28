@@ -75,7 +75,7 @@ println("Initial: d = $(round.(gp.d, sigdigits=4)), g = $(round(gp.g, sigdigits=
 drange = (d_info.ranges[1].min, d_info.ranges[1].max)
 grange = (g_info.min, g_info.max)
 
-result = jmle_gp_sep(gp; drange=drange, grange=grange, verb=0)
+result = jmle_gp_sep!(gp; drange=drange, grange=grange, verb=0)
 
 println("Optimized: d = $(round.(gp.d, sigdigits=4)), g = $(round(gp.g, sigdigits=4))")
 println("Log-likelihood: $(round(llik_gp_sep(gp), sigdigits=4))")

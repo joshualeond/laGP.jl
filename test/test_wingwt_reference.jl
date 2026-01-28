@@ -79,7 +79,7 @@ const WINGWT_REF = JSON3.read(
 
         # Run joint MLE optimization (MAP estimation with priors)
         # This uses jmle_gp_sep which optimizes all d and g jointly
-        jmle_gp_sep(gp; drange=(1e-6, 500.0), grange=(1e-10, 1.0))
+        jmle_gp_sep!(gp; drange=(1e-6, 500.0), grange=(1e-10, 1.0))
         llik_final = llik_gp_sep(gp)
 
         # Verify optimization improved the log-likelihood

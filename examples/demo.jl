@@ -127,7 +127,7 @@ gp = new_gp(X_train, Z_train, d_range.start, g_range.start)
 println("Initial log-likelihood: $(llik_gp(gp))")
 
 # MLE for hyperparameters
-jmle_gp(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
+jmle_gp!(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
 println("After MLE: d=$(gp.d), g=$(gp.g)")
 println("Final log-likelihood: $(llik_gp(gp))")
 

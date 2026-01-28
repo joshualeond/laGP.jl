@@ -39,16 +39,16 @@ export update_gp_sep!
 export extend_gp_sep!
 
 # MLE functions (isotropic)
-export mle_gp
-export jmle_gp
-export amle_gp
+export mle_gp!
+export jmle_gp!
+export amle_gp!
 export darg
 export garg
 
 # MLE functions (separable)
-export mle_gp_sep
-export jmle_gp_sep
-export amle_gp_sep
+export mle_gp_sep!
+export jmle_gp_sep!
+export amle_gp_sep!
 export darg_sep
 
 # Acquisition functions

@@ -223,7 +223,7 @@ for species in SPECIES
     println("  Initial log-likelihood: $(round(llik_gp_sep(gp), digits=2))")
 
     # MLE optimization
-    result = jmle_gp_sep(gp; drange=d_ranges, grange=(g_range.min, g_range.max))
+    result = jmle_gp_sep!(gp; drange=d_ranges, grange=(g_range.min, g_range.max))
 
     println("  After MLE: $(result.msg)")
     println("  Nugget g: $(round(gp.g, sigdigits=4))")

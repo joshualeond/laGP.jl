@@ -89,7 +89,7 @@ println("Nugget range: $(g_range.min) to $(g_range.max)")
 
 # Create and fit GP
 gp = new_gp(X_train, Z_train, d_range.start, g_range.start)
-jmle_gp(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
+jmle_gp!(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
 
 println("Optimized: d=$(gp.d), g=$(gp.g)")
 println("Log-likelihood: $(llik_gp(gp))")

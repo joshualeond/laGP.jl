@@ -14,7 +14,7 @@
 #   - AD gradient:     ~3857ms (60x slower!)
 #
 # OPTIMIZATION APPLIED:
-# Changed default from use_ad=true to use_ad=false in jmle_gp and jmle_gp_sep.
+# Changed default from use_ad=true to use_ad=false in jmle_gp! and jmle_gp_sep!.
 #
 # RESULTS:
 # - Isotropic GP MLE:  509s → 10.5s (~50x speedup)
@@ -95,10 +95,10 @@ d_ranges_warm = [(r.min, r.max) for r in da_warm_sep.ranges]
 
 # Warmup manual gradients (default)
 gp_warm = new_gp(X_warm, Y_warm, da_warm.start, ga_warm.start)
-jmle_gp(gp_warm; drange=(da_warm.min, da_warm.max), grange=(ga_warm.min, ga_warm.max))
+jmle_gp!(gp_warm; drange=(da_warm.min, da_warm.max), grange=(ga_warm.min, ga_warm.max))
 
 gp_sep_warm = new_gp_sep(X_warm, Y_warm, d_start_warm, ga_warm.start)
-jmle_gp_sep(gp_sep_warm; drange=d_ranges_warm, grange=(ga_warm.min, ga_warm.max))
+jmle_gp_sep!(gp_sep_warm; drange=d_ranges_warm, grange=(ga_warm.min, ga_warm.max))
 
 println("Warmup complete.")
 
@@ -148,16 +148,16 @@ println("\n" * "="^70)
 println("MLE TIMING (use_ad=false, the new default)")
 println("="^70)
 
-println("\n--- Isotropic GP (jmle_gp - joint L-BFGS) ---")
+println("\n--- Isotropic GP (jmle_gp! - joint L-BFGS) ---")
 gp_iso = new_gp(X, Y, da.start, ga.start)
-t_iso = @elapsed result_iso = jmle_gp(gp_iso; drange=(da.min, da.max), grange=(ga.min, ga.max))
+t_iso = @elapsed result_iso = jmle_gp!(gp_iso; drange=(da.min, da.max), grange=(ga.min, ga.max))
 println("Time: $(round(t_iso, digits=2))s")
 println("Iterations: $(result_iso.tot_its)")
 println("Final: d=$(round(result_iso.d, sigdigits=4)), g=$(round(result_iso.g, sigdigits=4))")
 
-println("\n--- Separable GP (jmle_gp_sep - joint L-BFGS) ---")
+println("\n--- Separable GP (jmle_gp_sep! - joint L-BFGS) ---")
 gp_sep = new_gp_sep(X, Y, d_start_sep, ga.start)
-t_sep = @elapsed result_sep = jmle_gp_sep(gp_sep; drange=d_ranges_sep, grange=(ga.min, ga.max))
+t_sep = @elapsed result_sep = jmle_gp_sep!(gp_sep; drange=d_ranges_sep, grange=(ga.min, ga.max))
 println("Time: $(round(t_sep, digits=2))s")
 println("Iterations: $(result_sep.tot_its)")
 println("Final g: $(round(result_sep.g, sigdigits=4))")
@@ -170,21 +170,21 @@ println("\n" * "="^70)
 println("ALTERNATING MLE TIMING (R-style)")
 println("="^70)
 
-println("\n--- Isotropic GP (amle_gp - alternating Newton) ---")
+println("\n--- Isotropic GP (amle_gp! - alternating Newton) ---")
 gp_iso_alt = new_gp(X, Y, da.start, ga.start)
-t_iso_alt = @elapsed result_iso_alt = amle_gp(gp_iso_alt; drange=(da.min, da.max), grange=(ga.min, ga.max))
+t_iso_alt = @elapsed result_iso_alt = amle_gp!(gp_iso_alt; drange=(da.min, da.max), grange=(ga.min, ga.max))
 println("Time: $(round(t_iso_alt, digits=2))s")
 println("Iterations: d=$(result_iso_alt.dits), g=$(result_iso_alt.gits), total=$(result_iso_alt.tot_its)")
 println("Final: d=$(round(result_iso_alt.d, sigdigits=4)), g=$(round(result_iso_alt.g, sigdigits=4))")
-println("Speedup vs jmle_gp: $(round(t_iso / t_iso_alt, digits=1))x")
+println("Speedup vs jmle_gp!: $(round(t_iso / t_iso_alt, digits=1))x")
 
-println("\n--- Separable GP (amle_gp_sep - alternating L-BFGS/Newton) ---")
+println("\n--- Separable GP (amle_gp_sep! - alternating L-BFGS/Newton) ---")
 gp_sep_alt = new_gp_sep(X, Y, d_start_sep, ga.start)
-t_sep_alt = @elapsed result_sep_alt = amle_gp_sep(gp_sep_alt; drange=d_ranges_sep, grange=(ga.min, ga.max))
+t_sep_alt = @elapsed result_sep_alt = amle_gp_sep!(gp_sep_alt; drange=d_ranges_sep, grange=(ga.min, ga.max))
 println("Time: $(round(t_sep_alt, digits=2))s")
 println("Iterations: d=$(result_sep_alt.dits), g=$(result_sep_alt.gits), total=$(result_sep_alt.tot_its)")
 println("Final g: $(round(result_sep_alt.g, sigdigits=4))")
-println("Speedup vs jmle_gp_sep: $(round(t_sep / t_sep_alt, digits=1))x")
+println("Speedup vs jmle_gp_sep!: $(round(t_sep / t_sep_alt, digits=1))x")
 
 # Verify results match between methods
 println("\n--- Verification: Results match between methods ---")
@@ -212,11 +212,11 @@ println("  AD gradient:     $(round(t_ad/3 * 1000, digits=2))ms")
 
 println("\nMLE timing comparison:")
 println("  Isotropic GP:")
-println("    jmle_gp (joint L-BFGS):      $(round(t_iso, digits=2))s")
-println("    amle_gp (alternating Newton): $(round(t_iso_alt, digits=2))s  ($(round(t_iso / t_iso_alt, digits=1))x faster)")
+println("    jmle_gp! (joint L-BFGS):      $(round(t_iso, digits=2))s")
+println("    amle_gp! (alternating Newton): $(round(t_iso_alt, digits=2))s  ($(round(t_iso / t_iso_alt, digits=1))x faster)")
 println("  Separable GP:")
-println("    jmle_gp_sep (joint L-BFGS):           $(round(t_sep, digits=2))s")
-println("    amle_gp_sep (alternating L-BFGS/Newton): $(round(t_sep_alt, digits=2))s  ($(round(t_sep / t_sep_alt, digits=1))x faster)")
+println("    jmle_gp_sep! (joint L-BFGS):           $(round(t_sep, digits=2))s")
+println("    amle_gp_sep! (alternating L-BFGS/Newton): $(round(t_sep_alt, digits=2))s  ($(round(t_sep / t_sep_alt, digits=1))x faster)")
 
 println("\nConclusion:")
 println("  Zygote AD is ~$(round(t_ad/3 / (t_manual/10)))x slower than manual gradients.")

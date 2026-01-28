@@ -98,20 +98,20 @@ using Test
         @test gp.g == 1e-5
     end
 
-    @testset "mle_gp_sep single parameter" begin
+    @testset "mle_gp_sep! single parameter" begin
         d = [0.5, 0.5]  # Start with equal lengthscales
         g = 1e-3
         gp = new_gp_sep(X, Z, d, g)
 
         # Optimize d[1]
-        result = mle_gp_sep(gp, :d, 1; tmin=0.01, tmax=10.0)
+        result = mle_gp_sep!(gp, :d, 1; tmin=0.01, tmax=10.0)
         @test haskey(result, :d)
         @test haskey(result, :g)
         @test haskey(result, :its)
         @test result.its > 0
 
         # Optimize g
-        result = mle_gp_sep(gp, :g; tmin=1e-8, tmax=1.0)
+        result = mle_gp_sep!(gp, :g; tmin=1e-8, tmax=1.0)
         @test haskey(result, :g)
         @test result.its > 0
     end
@@ -151,13 +151,13 @@ using Test
         @test grad.dllg ≈ fd_grad_g rtol=1e-3  # Use looser tolerance for nugget
     end
 
-    @testset "jmle_gp_sep joint optimization" begin
+    @testset "jmle_gp_sep! joint optimization" begin
         d = [0.5, 0.5]  # Start with equal lengthscales
         g = 1e-2
         gp = new_gp_sep(X, Z, d, g)
         llik_init = llik_gp_sep(gp)
 
-        result = jmle_gp_sep(gp; drange=(0.01, 10.0), grange=(1e-8, 1.0))
+        result = jmle_gp_sep!(gp; drange=(0.01, 10.0), grange=(1e-8, 1.0))
 
         @test haskey(result, :d)
         @test haskey(result, :g)
@@ -202,7 +202,7 @@ using Test
         da_iso = darg(X_train)
         ga = garg(Z_train)
         gp_iso = new_gp(X_train, Z_train, da_iso.start, ga.start)
-        jmle_gp(gp_iso; drange=(da_iso.min, da_iso.max), grange=(ga.min, ga.max))
+        jmle_gp!(gp_iso; drange=(da_iso.min, da_iso.max), grange=(ga.min, ga.max))
         pred_iso = pred_gp(gp_iso, X_test; lite=true)
         rmse_iso = sqrt(mean((pred_iso.mean .- Z_test).^2))
 
@@ -211,7 +211,7 @@ using Test
         d_start = [r.start for r in da_sep.ranges]
         d_ranges = [(r.min, r.max) for r in da_sep.ranges]
         gp_sep = new_gp_sep(X_train, Z_train, d_start, ga.start)
-        jmle_gp_sep(gp_sep; drange=d_ranges, grange=(ga.min, ga.max))
+        jmle_gp_sep!(gp_sep; drange=d_ranges, grange=(ga.min, ga.max))
         pred_sep = pred_gp_sep(gp_sep, X_test; lite=true)
         rmse_sep = sqrt(mean((pred_sep.mean .- Z_test).^2))
 

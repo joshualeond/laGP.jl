@@ -51,7 +51,7 @@ println("\nInitial log-likelihood: $(llik_gp_sep(gp))")
 # R uses eps = sqrt(.Machine$double.eps) for lower bound, max d=81
 drange = (sqrt(eps(Float64)), 81.0)   # lengthscale range (R default max)
 grange = (sqrt(eps(Float64)), 1.0)    # nugget range
-jmle_gp_sep(gp; drange=drange, grange=grange)
+jmle_gp_sep!(gp; drange=drange, grange=grange)
 
 println("\nMLE results:")
 println("  d: $(gp.d)")

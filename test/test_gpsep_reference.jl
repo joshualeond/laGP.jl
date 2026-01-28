@@ -91,7 +91,7 @@ const GPSEP_REF = JSON3.read(
         llik_init = llik_gp_sep(gp)
 
         # Run joint MLE (now with priors - MAP estimation)
-        jmle_gp_sep(gp; drange=(1e-6, 10.0), grange=(1e-10, 1.0))
+        jmle_gp_sep!(gp; drange=(1e-6, 10.0), grange=(1e-10, 1.0))
         llik_final = llik_gp_sep(gp)
 
         # With MAP estimation, the posterior improves but the likelihood may not

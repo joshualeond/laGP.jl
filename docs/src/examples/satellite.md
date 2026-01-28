@@ -123,7 +123,7 @@ for species in species_list
 
     # Fit GP
     gp = new_gp_sep(X_train, Y_train, d_start, g_range.start)
-    jmle_gp_sep(gp; drange=d_ranges, grange=(g_range.min, g_range.max))
+    jmle_gp_sep!(gp; drange=d_ranges, grange=(g_range.min, g_range.max))
 
     # Predict
     pred = pred_gp_sep(gp, X_test; lite=true)

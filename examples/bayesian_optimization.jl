@@ -154,7 +154,7 @@ for iter in 0:n_iters
     gp = new_gp(X_obs, Y_obs, d_range.start, 1e-6)
 
     # MLE for lengthscale (keep nugget small and fixed)
-    mle_gp(gp, :d; tmin=d_range.min, tmax=d_range.max)
+    mle_gp!(gp, :d; tmin=d_range.min, tmax=d_range.max)
 
     println("  GP hyperparameters: d=$(round(gp.d, sigdigits=4)), g=$(gp.g)")
     println("  Log-likelihood: $(round(llik_gp(gp), sigdigits=4))")

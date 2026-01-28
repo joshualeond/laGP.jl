@@ -43,7 +43,7 @@ g_range = garg(Z)
 
 # Create and fit GP
 gp = new_gp(X, Z, d_range.start, g_range.start)
-jmle_gp(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
+jmle_gp!(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
 
 # Make predictions
 X_test = rand(10, 2)

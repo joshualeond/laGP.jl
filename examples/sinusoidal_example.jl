@@ -39,7 +39,7 @@ gp = new_gp(X_train, Y_train, d_init, g_init)
 
 # MLE for lengthscale only (nugget stays fixed at 1e-6)
 # Matches R's simple API: mleGP(gp, tmax=20)
-mle_gp(gp, :d; tmax=20)
+mle_gp!(gp, :d; tmax=20)
 
 println("\nOptimized hyperparameters:")
 println("  d = ", gp.d)

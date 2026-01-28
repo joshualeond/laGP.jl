@@ -62,7 +62,7 @@ Fit a full GP and optimize both lengthscale (d) and nugget (g):
 gp = new_gp(X, Z, da.start, ga.start)
 
 # Joint MLE for both d and g
-result = jmle_gp(gp; drange=(da.min, da.max), grange=(ga.min, ga.max))
+result = jmle_gp!(gp; drange=(da.min, da.max), grange=(ga.min, ga.max))
 
 println("MLE results:")
 println("  d = ", round(gp.d, digits=4))

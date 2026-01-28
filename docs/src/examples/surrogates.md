@@ -93,7 +93,7 @@ g_range = garg(Y)
 
 # Fit isotropic GP
 gp_iso = new_gp(X, Y, d_range.start, g_range.start)
-jmle_gp(gp_iso; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
+jmle_gp!(gp_iso; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
 
 println("Isotropic GP:")
 println("  d = $(round(gp_iso.d, sigdigits=4))")
@@ -112,7 +112,7 @@ d_ranges_sep = [(r.min, r.max) for r in d_range_sep.ranges]
 
 # Fit separable GP
 gp_sep = new_gp_sep(X, Y, d_start_sep, g_range.start)
-jmle_gp_sep(gp_sep; drange=d_ranges_sep, grange=(g_range.min, g_range.max))
+jmle_gp_sep!(gp_sep; drange=d_ranges_sep, grange=(g_range.min, g_range.max))
 
 println("Separable GP:")
 println("  Lengthscales:")

@@ -47,7 +47,7 @@ g_init = 1e-6  # small nugget for near-interpolation
 gp = new_gp(X_train, Y_train, d_init, g_init)
 
 # MLE for lengthscale only (keep small nugget fixed)
-mle_gp(gp, :d; tmax=20.0)
+mle_gp!(gp, :d; tmax=20.0)
 
 println("Optimized hyperparameters:")
 println("  d = ", gp.d)

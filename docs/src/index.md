@@ -43,7 +43,7 @@ g_range = garg(Z)
 gp = new_gp(X, Z, d_range.start, g_range.start)
 
 # Optimize hyperparameters via joint MLE
-jmle_gp(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
+jmle_gp!(gp; drange=(d_range.min, d_range.max), grange=(g_range.min, g_range.max))
 
 println("Optimized lengthscale: ", gp.d)
 println("Optimized nugget: ", gp.g)

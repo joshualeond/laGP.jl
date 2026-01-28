@@ -343,11 +343,11 @@ function _agp_single(X::Matrix{T}, Z::Vector{T}, Xref::AbstractVector{T},
     final_g = gp.g
     if d_mle || g_mle
         if d_mle && g_mle
-            jmle_gp(gp; drange=(d_min, d_max), grange=(g_min, g_max))
+            jmle_gp!(gp; drange=(d_min, d_max), grange=(g_min, g_max))
         elseif d_mle
-            mle_gp(gp, :d; tmin=d_min, tmax=d_max)
+            mle_gp!(gp, :d; tmin=d_min, tmax=d_max)
         else
-            mle_gp(gp, :g; tmin=g_min, tmax=g_max)
+            mle_gp!(gp, :g; tmin=g_min, tmax=g_max)
         end
         final_d = gp.d
         final_g = gp.g

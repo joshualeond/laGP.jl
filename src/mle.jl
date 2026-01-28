@@ -136,7 +136,7 @@ end
 # ============================================================================
 
 """
-    mle_gp(gp, param; tmax, tmin=sqrt(eps(T)))
+    mle_gp!(gp, param; tmax, tmin=sqrt(eps(T)))
 
 Optimize a single GP hyperparameter via maximum likelihood.
 
@@ -149,7 +149,7 @@ Optimize a single GP hyperparameter via maximum likelihood.
 # Returns
 - `NamedTuple`: (d=..., g=..., its=..., msg=...) optimization result
 """
-function mle_gp(gp::GP{T}, param::Symbol; tmax::Real, tmin::Real=sqrt(eps(T))) where {T}
+function mle_gp!(gp::GP{T}, param::Symbol; tmax::Real, tmin::Real=sqrt(eps(T))) where {T}
     @assert param in (:d, :g) "param must be :d or :g"
     @assert tmin < tmax "tmin must be less than tmax"
 
@@ -201,7 +201,7 @@ function mle_gp(gp::GP{T}, param::Symbol; tmax::Real, tmin::Real=sqrt(eps(T))) w
 end
 
 """
-    jmle_gp(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
+    jmle_gp!(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
 
 Joint MLE optimization of d and g for GP.
 
@@ -217,7 +217,7 @@ Joint MLE optimization of d and g for GP.
 # Returns
 - `NamedTuple`: (d=..., g=..., tot_its=..., msg=...)
 """
-function jmle_gp(gp::GP{T}; drange::Tuple{Real,Real}, grange::Tuple{Real,Real},
+function jmle_gp!(gp::GP{T}; drange::Tuple{Real,Real}, grange::Tuple{Real,Real},
                   maxit::Int=100, verb::Int=0,
                   dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
                   gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
@@ -372,7 +372,7 @@ end
 # ============================================================================
 
 """
-    mle_gp_sep(gp, param, dim; tmax, tmin=sqrt(eps(T)))
+    mle_gp_sep!(gp, param, dim; tmax, tmin=sqrt(eps(T)))
 
 Optimize a single hyperparameter of a separable GP via maximum likelihood.
 
@@ -386,7 +386,7 @@ Optimize a single hyperparameter of a separable GP via maximum likelihood.
 # Returns
 - `NamedTuple`: (d=..., g=..., its=..., msg=...) optimization result
 """
-function mle_gp_sep(gp::GPsep{T}, param::Symbol, dim::Int=1;
+function mle_gp_sep!(gp::GPsep{T}, param::Symbol, dim::Int=1;
                      tmax::Real, tmin::Real=sqrt(eps(T))) where {T}
     @assert param in (:d, :g) "param must be :d or :g"
     @assert tmin < tmax "tmin must be less than tmax"
@@ -451,7 +451,7 @@ function mle_gp_sep(gp::GPsep{T}, param::Symbol, dim::Int=1;
 end
 
 """
-    jmle_gp_sep(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
+    jmle_gp_sep!(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
 
 Joint MLE optimization of lengthscales and nugget for GPsep.
 
@@ -467,7 +467,7 @@ Joint MLE optimization of lengthscales and nugget for GPsep.
 # Returns
 - `NamedTuple`: (d=..., g=..., tot_its=..., msg=...)
 """
-function jmle_gp_sep(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple{Real,Real}}},
+function jmle_gp_sep!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple{Real,Real}}},
                       grange::Tuple{Real,Real}, maxit::Int=100, verb::Int=0,
                       dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
                       gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
@@ -1032,7 +1032,7 @@ end
 # ============================================================================
 
 """
-    amle_gp(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
+    amle_gp!(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
 
 Alternating MLE optimization for isotropic GP (R-style jmleGP).
 
@@ -1051,7 +1051,7 @@ This matches R's laGP algorithm where both d and g use Newton's method.
 # Returns
 - `NamedTuple`: (d=..., g=..., dits=..., gits=..., tot_its=..., msg=...)
 """
-function amle_gp(gp::GP{T}; drange::Tuple{Real,Real}, grange::Tuple{Real,Real},
+function amle_gp!(gp::GP{T}; drange::Tuple{Real,Real}, grange::Tuple{Real,Real},
                   maxit::Int=100, verb::Int=0,
                   dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
                   gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
@@ -1099,7 +1099,7 @@ function amle_gp(gp::GP{T}; drange::Tuple{Real,Real}, grange::Tuple{Real,Real},
 end
 
 """
-    amle_gp_sep(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
+    amle_gp_sep!(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
 
 Alternating MLE optimization for separable GP (R-style jmleGPsep).
 
@@ -1118,7 +1118,7 @@ This matches R's laGP algorithm.
 # Returns
 - `NamedTuple`: (d=..., g=..., dits=..., gits=..., tot_its=..., conv=..., msg=...)
 """
-function amle_gp_sep(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple{Real,Real}}},
+function amle_gp_sep!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple{Real,Real}}},
                       grange::Tuple{Real,Real}, maxit::Int=100, verb::Int=0,
                       dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
                       gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
