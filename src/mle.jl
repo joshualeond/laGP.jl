@@ -2,6 +2,52 @@
 
 using Optim: Brent, LBFGS, Fminbox, optimize, minimizer, converged, only_fg!
 using SpecialFunctions: loggamma
+using LoopVectorization: @turbo
+
+# ============================================================================
+# SIMD-Optimized Distance Computation
+# ============================================================================
+
+"""
+    _pairwise_squared_distance!(distances, X, i, j)
+
+Compute squared Euclidean distance between rows i and j of X.
+Uses SIMD vectorization for optimal performance.
+"""
+@inline function _squared_distance_rows(X::Matrix{T}, i::Int, j::Int) where {T}
+    m = size(X, 2)
+    dist_sq = zero(T)
+    @turbo for k in 1:m
+        diff = X[i, k] - X[j, k]
+        dist_sq += diff * diff
+    end
+    return dist_sq
+end
+
+"""
+    _compute_all_pairwise_distances!(distances, X)
+
+Compute all pairwise squared Euclidean distances for upper triangular pairs.
+Stores results in pre-allocated `distances` vector of length n*(n-1)/2.
+Uses SIMD vectorization for optimal performance.
+"""
+function _compute_all_pairwise_distances!(distances::Vector{T}, X::Matrix{T}) where {T}
+    n = size(X, 1)
+    m = size(X, 2)
+    idx = 0
+    @inbounds for i in 1:n
+        for j in (i + 1):n
+            dist_sq = zero(T)
+            @turbo for k in 1:m
+                diff = X[i, k] - X[j, k]
+                dist_sq += diff * diff
+            end
+            idx += 1
+            distances[idx] = dist_sq
+        end
+    end
+    return distances
+end
 
 # ============================================================================
 # Inverse-Gamma Prior Functions (matching R's laGP approach)
@@ -256,20 +302,16 @@ function darg(X::Matrix{T}; d::Union{Nothing,Real}=nothing,
     # Pre-allocate array for pairwise squared Euclidean distances
     n_pairs = div(n * (n - 1), 2)
     distances = Vector{T}(undef, n_pairs)
-    idx = 0
+
+    # Use SIMD-optimized pairwise distance computation
+    _compute_all_pairwise_distances!(distances, X)
+
+    # Filter non-zero distances
     n_nonzero = 0
-    @inbounds for i in 1:n
-        for j in (i + 1):n
-            dist_sq = zero(T)
-            for k in axes(X, 2)
-                diff = X[i, k] - X[j, k]
-                dist_sq += diff * diff
-            end
-            idx += 1
-            if dist_sq > 0
-                n_nonzero += 1
-                distances[n_nonzero] = dist_sq
-            end
+    @inbounds for i in 1:n_pairs
+        if distances[i] > 0
+            n_nonzero += 1
+            distances[n_nonzero] = distances[i]
         end
     end
 
@@ -528,18 +570,16 @@ function darg_sep(X::Matrix{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
     # Pre-allocate array for TOTAL pairwise squared Euclidean distances
     n_pairs = div(n * (n - 1), 2)
     distances = Vector{T}(undef, n_pairs)
+
+    # Use SIMD-optimized pairwise distance computation
+    _compute_all_pairwise_distances!(distances, X)
+
+    # Filter non-zero distances
     n_nonzero = 0
-    @inbounds for i in 1:n
-        for j in (i + 1):n
-            dist_sq = zero(T)
-            for k in 1:m
-                diff = X[i, k] - X[j, k]
-                dist_sq += diff * diff
-            end
-            if dist_sq > 0
-                n_nonzero += 1
-                distances[n_nonzero] = dist_sq
-            end
+    @inbounds for i in 1:n_pairs
+        if distances[i] > 0
+            n_nonzero += 1
+            distances[n_nonzero] = distances[i]
         end
     end
 

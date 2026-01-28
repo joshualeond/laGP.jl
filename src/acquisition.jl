@@ -2,6 +2,27 @@
 
 using KernelFunctions: kernelmatrix, RowVecs
 using LinearAlgebra: mul!
+using LoopVectorization: @turbo
+
+"""
+    _alc_inner_sum(k_ref, gvec, kxy, mui, inv_mui, phi, df, n, n_ref)
+
+Compute the ALC sum using SIMD-optimized loops.
+"""
+function _alc_inner_sum(k_ref::Matrix{T}, gvec::Vector{T}, kxy::Vector{T},
+                        mui::T, inv_mui::T, phi::T, df::T, n::Int, n_ref::Int) where {T}
+    alc_sum = zero(T)
+    @inbounds for j in 1:n_ref
+        kg = zero(T)
+        @turbo for k in 1:n
+            kg += k_ref[k, j] * gvec[k]
+        end
+        kxy_j = kxy[j]
+        ktKikx_j = kg * kg * mui + 2 * kg * kxy_j + kxy_j * kxy_j * inv_mui
+        alc_sum += phi * ktKikx_j / df
+    end
+    return alc_sum
+end
 
 """
     alc_gp(gp, Xcand, Xref)
@@ -67,16 +88,8 @@ function alc_gp(gp::GP{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
         # kxy = k(x_cand, Xref)
         kxy = vec(kernelmatrix(gp.kernel, RowVecs(x_cand), RowVecs(Xref)))
 
-        # Compute ALC contribution
-        alc_sum = zero(T)
-        @inbounds for j in 1:n_ref
-            kg = zero(T)
-            for k in 1:n
-                kg += k_ref[k, j] * gvec[k]
-            end
-            ktKikx_j = kg * kg * mui + 2 * kg * kxy[j] + kxy[j] * kxy[j] * inv_mui
-            alc_sum += gp.phi * ktKikx_j / df
-        end
+        # Compute ALC contribution using SIMD-optimized inner sum
+        alc_sum = _alc_inner_sum(k_ref, gvec, kxy, mui, inv_mui, gp.phi, df, n, n_ref)
 
         alc[i] = alc_sum * df_rat / n_ref
     end
