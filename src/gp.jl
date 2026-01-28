@@ -55,12 +55,10 @@ end
     _add_nugget_diagonal!(K, g)
 
 Add nugget to diagonal of matrix K in-place.
-
-Uses @simd for vectorization on simple diagonal access.
 """
 function _add_nugget_diagonal!(K::Matrix{T}, g::T) where {T}
     n = size(K, 1)
-    @inbounds @simd for i in 1:n
+    @inbounds for i in 1:n
         K[i, i] += g
     end
     return K
@@ -72,13 +70,11 @@ end
 Compute log determinant from Cholesky factorization.
 
 Optimized to avoid allocating a temporary vector for the diagonal.
-Uses @simd for vectorized accumulation.
 """
 function _compute_logdet_chol(chol::Cholesky{T}) where {T}
     ldetK = zero(T)
     L = chol.L
-    n = size(L, 1)
-    @inbounds @simd for i in 1:n
+    @inbounds for i in axes(L, 1)
         ldetK += log(L[i, i])
     end
     return 2 * ldetK
