@@ -172,10 +172,6 @@ The local design shows which training points were selected for predicting at the
 
 ![Local Design Selection](../assets/local_design.png)
 
-The test function itself has interesting structure with constraints:
-
-![Constrained Problem](../assets/constrained_problem.png)
-
 ## Key Observations
 
 1. **Full GP vs Local**: For smooth functions, full GP and aGP produce similar predictions

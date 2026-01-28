@@ -49,24 +49,6 @@ function f2d(X::Matrix)
     return -g(x) .* g(y)
 end
 
-"""
-    constraint1(X)
-
-First constraint function (feasible when c1 <= 0).
-"""
-function constraint1(X::Matrix)
-    return 1.5 .- X[:, 1] .- 2 .* X[:, 2] .- 0.5 .* sin.(2π .* (X[:, 1].^2 .- 2 .* X[:, 2]))
-end
-
-"""
-    constraint2(X)
-
-Second constraint function (feasible when c2 <= 0).
-"""
-function constraint2(X::Matrix)
-    return sum(X.^2, dims=2)[:] .- 1.5
-end
-
 # ============================================================================
 # Generate Training Data
 # ============================================================================
@@ -78,7 +60,7 @@ n_train = 100
 plan, _ = LHCoptim(n_train, 2, 10)  # 100 points, 2 dims, 10 iterations
 X_train = Matrix{Float64}(plan ./ n_train)
 
-# Scale to [-2, 2] for f2d, then back to [0, 1] for constraint functions
+# Scale to [-2, 2] for f2d
 X_scaled = 4.0 .* (X_train .- 0.5)
 Z_train = f2d(X_scaled)
 
@@ -288,49 +270,7 @@ axislegend(ax4, position=:lt)
 save(joinpath(OUTPUT_DIR, "local_design.png"), fig4)
 println("Saved: local_design.png")
 
-# 5. Constrained Optimization Problem Visualization
-println("Creating constrained problem visualization...")
-
-# Create fine grid for constraint visualization
-n_constraint = 150
-x_constraint = range(0.0, 1.0, length=n_constraint)
-XX_constraint = Matrix{Float64}(undef, n_constraint^2, 2)
-let idx = 1
-    for j in 1:n_constraint
-        for i in 1:n_constraint
-            XX_constraint[idx, 1] = x_constraint[i]
-            XX_constraint[idx, 2] = x_constraint[j]
-            idx += 1
-        end
-    end
-end
-
-# Evaluate objective and constraints
-f_vals = f2d(4.0 .* (XX_constraint .- 0.5))
-c1_vals = constraint1(XX_constraint)
-c2_vals = constraint2(XX_constraint)
-
-Z_f = reshape(f_vals, n_constraint, n_constraint)
-Z_c1 = reshape(c1_vals, n_constraint, n_constraint)
-Z_c2 = reshape(c2_vals, n_constraint, n_constraint)
-
-fig5 = Figure(size=(600, 500))
-ax5 = Axis(fig5[1, 1], xlabel="x₁", ylabel="x₂", title="Constrained Problem",
-           aspect=DataAspect())
-# Objective function contours
-hm5 = heatmap!(ax5, collect(x_constraint), collect(x_constraint), Z_f, colormap=:viridis)
-contour!(ax5, collect(x_constraint), collect(x_constraint), Z_f, color=:white, linewidth=0.5, levels=15)
-# Constraint boundaries (c1 = 0 and c2 = 0)
-contour!(ax5, collect(x_constraint), collect(x_constraint), Z_c1, color=:red, linewidth=2, levels=[0.0])
-contour!(ax5, collect(x_constraint), collect(x_constraint), Z_c2, color=:orange, linewidth=2, levels=[0.0])
-# Training points
-scatter!(ax5, X_train[:, 1], X_train[:, 2], color=:blue, markersize=4,
-         strokewidth=0.5, strokecolor=:white, alpha=0.7)
-Colorbar(fig5[1, 2], hm5, label="Objective")
-save(joinpath(OUTPUT_DIR, "constrained_problem.png"), fig5)
-println("Saved: constrained_problem.png")
-
-# 6. Comparison Plot: Full GP vs aGP ALC vs aGP NN
+# 5. Comparison Plot: Full GP vs aGP ALC vs aGP NN
 println("Creating comparison plot...")
 fig6 = Figure(size=(1200, 400))
 
@@ -368,5 +308,4 @@ println("  - gp_surface.png: Full GP mean prediction")
 println("  - gp_variance.png: Full GP prediction variance")
 println("  - agp_predictions.png: aGP mean and variance")
 println("  - local_design.png: Local design selection example")
-println("  - constrained_problem.png: Test function with constraints")
 println("  - comparison.png: Full GP vs aGP comparison")
