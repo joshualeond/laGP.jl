@@ -27,6 +27,7 @@ export llik_gp
 export dllik_gp
 export d2llik_gp
 export update_gp!
+export extend_gp!
 
 # Core GP functions (separable)
 export new_gp_sep
