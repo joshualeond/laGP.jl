@@ -2,6 +2,7 @@
 
 using AbstractGPs: GP as AbstractGP, posterior, mean, var
 using KernelFunctions: SqExponentialKernel, with_lengthscale, ARDTransform, kernelmatrix!, kernelmatrix, RowVecs
+using LoopVectorization: @turbo
 
 # ============================================================================
 # Shared helper functions
@@ -21,13 +22,45 @@ function _concentrated_llik(n::Int, phi::T, ldetK::T) where {T}
 end
 
 """
+    _compute_squared_distance_matrix!(D_sq, X)
+
+Compute the squared distance matrix D_sq[i,j] = ||x_i - x_j||² in-place.
+Uses SIMD vectorization for optimal performance.
+"""
+function _compute_squared_distance_matrix!(D_sq::Matrix{T}, X::Matrix{T}) where {T}
+    n = size(X, 1)
+    m = size(X, 2)
+
+    # Zero the diagonal
+    @inbounds for i in 1:n
+        D_sq[i, i] = zero(T)
+    end
+
+    # Compute upper triangle with SIMD
+    @inbounds for i in 1:n
+        for j in (i+1):n
+            dist_sq = zero(T)
+            @turbo for k in 1:m
+                diff = X[i, k] - X[j, k]
+                dist_sq += diff * diff
+            end
+            D_sq[i, j] = dist_sq
+            D_sq[j, i] = dist_sq
+        end
+    end
+    return D_sq
+end
+
+"""
     _add_nugget_diagonal!(K, g)
 
 Add nugget to diagonal of matrix K in-place.
+
+Uses @simd for vectorization on simple diagonal access.
 """
 function _add_nugget_diagonal!(K::Matrix{T}, g::T) where {T}
     n = size(K, 1)
-    @inbounds for i in 1:n
+    @inbounds @simd for i in 1:n
         K[i, i] += g
     end
     return K
@@ -39,11 +72,13 @@ end
 Compute log determinant from Cholesky factorization.
 
 Optimized to avoid allocating a temporary vector for the diagonal.
+Uses @simd for vectorized accumulation.
 """
 function _compute_logdet_chol(chol::Cholesky{T}) where {T}
     ldetK = zero(T)
     L = chol.L
-    @inbounds for i in axes(L, 1)
+    n = size(L, 1)
+    @inbounds @simd for i in 1:n
         ldetK += log(L[i, i])
     end
     return 2 * ldetK
@@ -55,18 +90,21 @@ end
 Compute diagonal (lite) variance for GP predictions.
 
 Formula: s2[j] = (phi/n) * (1 + g - k[:,j]' * Ki * k[:,j])
+
+Uses SIMD vectorization for optimal performance.
 """
 function _compute_lite_variance(k::Matrix{T}, Kik::Matrix{T}, phi::T, n::Int, g::T) where {T}
     n_test = size(k, 2)
     n_train = size(k, 1)
     s2 = Vector{T}(undef, n_test)
     scale = phi / n
+    base = one(T) + g
     @inbounds for j in 1:n_test
         kKik = zero(T)
-        for i in 1:n_train
+        @turbo for i in 1:n_train
             kKik += k[i, j] * Kik[i, j]
         end
-        s2[j] = scale * (one(T) + g - kKik)
+        s2[j] = scale * (base - kKik)
     end
     return s2
 end
@@ -302,20 +340,9 @@ function d2llik_gp(gp::GP{T}; d2g::Bool=true, d2d::Bool=true) where {T}
         K_no_nugget = kernelmatrix(gp.kernel, RowVecs(X))
 
         # Compute squared distance matrix D²[i,j] = ||x_i - x_j||²
-        # We can recover this from K: K[i,j] = exp(-D²[i,j]/d), so D²[i,j] = -d * log(K[i,j])
-        # But for numerical stability, compute directly
-        D_sq = zeros(T, n, n)
-        @inbounds for i in 1:n
-            for j in (i+1):n
-                dist_sq = zero(T)
-                for k in axes(X, 2)
-                    diff = X[i, k] - X[j, k]
-                    dist_sq += diff * diff
-                end
-                D_sq[i, j] = dist_sq
-                D_sq[j, i] = dist_sq
-            end
-        end
+        # Uses SIMD-optimized computation for optimal performance
+        D_sq = Matrix{T}(undef, n, n)
+        _compute_squared_distance_matrix!(D_sq, X)
 
         inv_d_sq = one(T) / (d * d)
 

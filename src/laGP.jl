@@ -10,6 +10,7 @@ module laGP
 using AbstractGPs
 using KernelFunctions
 using LinearAlgebra
+using LoopVectorization
 using Optim
 using Statistics
 

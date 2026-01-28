@@ -1,18 +1,21 @@
 # Local Approximate GP functions
 
 using LinearAlgebra: mul!
+using LoopVectorization: @turbo
 
 """
     _compute_squared_distances(X, Xref)
 
 Compute squared Euclidean distances from Xref to all rows of X.
 Returns a vector of length n where n is the number of rows in X.
+
+Uses SIMD vectorization via LoopVectorization.jl for optimal performance.
 """
 function _compute_squared_distances(X::Matrix{T}, Xref::AbstractVector{T}) where {T}
     n = size(X, 1)
     m = length(Xref)
     distances = Vector{T}(undef, n)
-    @inbounds for i in 1:n
+    @turbo for i in 1:n
         dist_sq = zero(T)
         for j in 1:m
             diff = X[i, j] - Xref[j]
