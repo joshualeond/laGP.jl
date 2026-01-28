@@ -66,6 +66,7 @@ mutable struct GP{T<:Real, K}
     g::T
     phi::T
     ldetK::T
+    tr_Ki::T  # Cached trace of Ki for gradient computation
 end
 
 """
@@ -98,6 +99,7 @@ mutable struct GPsep{T<:Real, K}
     g::T
     phi::T
     ldetK::T
+    tr_Ki::T  # Cached trace of Ki for gradient computation
 end
 
 # Union type for any GP model (useful for generic functions)
