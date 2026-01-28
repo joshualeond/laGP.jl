@@ -1,6 +1,5 @@
 # Acquisition functions for sequential design
 
-using KernelFunctions: kernelmatrix, RowVecs
 using LinearAlgebra: mul!, Symmetric
 using LoopVectorization: @turbo
 
@@ -55,6 +54,76 @@ function _apply_kernel_isotropic!(K::Matrix{T}, D_sq::Matrix{T}, d::T) where {T}
 end
 
 # ============================================================================
+# Fused kernel computation helpers (avoid intermediate distance matrices)
+# ============================================================================
+
+"""
+    _compute_kernel_isotropic!(K, X1, X2, d)
+
+Compute isotropic squared exponential kernel between rows of X1 and X2.
+K[i,j] = exp(-||X1[i,:] - X2[j,:]||² / d)
+"""
+function _compute_kernel_isotropic!(K::AbstractMatrix{T}, X1::AbstractMatrix{T},
+                                    X2::AbstractMatrix{T}, d::T) where {T}
+    n1, m = size(X1)
+    n2 = size(X2, 1)
+    inv_d = one(T) / d
+    @inbounds for j in 1:n2
+        for i in 1:n1
+            dist_sq = zero(T)
+            @turbo for k in 1:m
+                diff = X1[i, k] - X2[j, k]
+                dist_sq += diff * diff
+            end
+            K[i, j] = exp(-dist_sq * inv_d)
+        end
+    end
+    return K
+end
+
+"""
+    _compute_kernel_vector!(k, X, x, d)
+
+Compute isotropic squared exponential kernel between rows of X and vector x.
+k[i] = exp(-||X[i,:] - x||² / d)
+"""
+function _compute_kernel_vector!(k::AbstractVector{T}, X::AbstractMatrix{T},
+                                 x::AbstractVector{T}, d::T) where {T}
+    n, m = size(X)
+    inv_d = one(T) / d
+    @inbounds for i in 1:n
+        dist_sq = zero(T)
+        @turbo for j in 1:m
+            diff = X[i, j] - x[j]
+            dist_sq += diff * diff
+        end
+        k[i] = exp(-dist_sq * inv_d)
+    end
+    return k
+end
+
+"""
+    _compute_kernel_vector_row!(k, X1, X2, row, d)
+
+Compute isotropic kernel between rows of X1 and a specific row of X2.
+k[i] = exp(-||X1[i,:] - X2[row,:]||² / d)
+"""
+function _compute_kernel_vector_row!(k::AbstractVector{T}, X1::AbstractMatrix{T},
+                                     X2::AbstractMatrix{T}, row::Int, d::T) where {T}
+    n, m = size(X1)
+    inv_d = one(T) / d
+    @inbounds for i in 1:n
+        dist_sq = zero(T)
+        @turbo for j in 1:m
+            diff = X1[i, j] - X2[row, j]
+            dist_sq += diff * diff
+        end
+        k[i] = exp(-dist_sq * inv_d)
+    end
+    return k
+end
+
+# ============================================================================
 # ALC inner computation
 # ============================================================================
 
@@ -79,64 +148,44 @@ function _alc_inner_sum(k_ref::Matrix{T}, gvec::Vector{T}, kxy::AbstractVector{T
 end
 
 """
-    alc_gp(gp, Xcand, Xref)
+    _alc_gp_idx!(alc, gp, Xcand, cand_idx, Xref)
 
-Compute Active Learning Cohn (ALC) acquisition values.
-
-ALC measures expected variance reduction at reference points Xref
-if we were to add each candidate point from Xcand to the design.
-
-# Arguments
-- `gp::GP`: Gaussian Process model
-- `Xcand::Matrix`: candidate points (n_cand x m)
-- `Xref::Matrix`: reference points (n_ref x m)
-
-# Returns
-- `Vector`: ALC values for each candidate point
+Internal low-allocation ALC kernel that computes criteria for rows in `Xcand`
+specified by `cand_idx`. Results are written into `alc`.
 """
-function alc_gp(gp::GP{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
+function _alc_gp_idx!(alc::AbstractVector{T}, gp::GP{T},
+                      Xcand::AbstractMatrix{T},
+                      cand_idx::AbstractVector{<:Integer},
+                      Xref::AbstractMatrix{T}) where {T}
     n = size(gp.X, 1)
-    n_cand = size(Xcand, 1)
     n_ref = size(Xref, 1)
     df = T(n)
 
-    # Pre-compute k(X, Xref) using kernel
-    k_ref = kernelmatrix(gp.kernel, RowVecs(gp.X), RowVecs(Xref))
+    # Pre-compute k(X, Xref)
+    k_ref_vec = Vector{T}()
+    k_ref = Matrix{T}(undef, 0, 0)
+    if n_ref == 1
+        k_ref_vec = Vector{T}(undef, n)
+        _compute_kernel_vector_row!(k_ref_vec, gp.X, Xref, 1, gp.d)
+    else
+        k_ref = Matrix{T}(undef, n, n_ref)
+        _compute_kernel_isotropic!(k_ref, gp.X, Xref, gp.d)
+    end
 
     # Use cached Ki (already computed and stored in GP struct)
-    # Wrap in Symmetric for efficient BLAS operations (uses DSYMV instead of DGEMV)
     Ki = Symmetric(gp.Ki)
 
-    # ========================================================================
-    # Batched kernel computation using SIMD
-    # Pre-compute all kernel values outside the loop
-    # ========================================================================
-
-    # K_X_cand[i,j] = k(X[i,:], Xcand[j,:]) - kernel between training and candidates
-    D_sq_X_cand = Matrix{T}(undef, n, n_cand)
-    _compute_squared_distances_batched!(D_sq_X_cand, gp.X, Xcand)
-    K_X_cand = similar(D_sq_X_cand)
-    _apply_kernel_isotropic!(K_X_cand, D_sq_X_cand, gp.d)
-
-    # K_cand_ref[i,j] = k(Xcand[i,:], Xref[j,:]) - kernel between candidates and reference
-    D_sq_cand_ref = Matrix{T}(undef, n_cand, n_ref)
-    _compute_squared_distances_batched!(D_sq_cand_ref, Xcand, Xref)
-    K_cand_ref = similar(D_sq_cand_ref)
-    _apply_kernel_isotropic!(K_cand_ref, D_sq_cand_ref, gp.d)
-
-    # Allocate output
-    alc = Vector{T}(undef, n_cand)
-
-    # Pre-allocate workspace vectors
+    # Workspace vectors
+    kx = Vector{T}(undef, n)
     Kikx = Vector{T}(undef, n)
     gvec = Vector{T}(undef, n)
+    kxy = Vector{T}(undef, n_ref)
 
-    # Scaling factor
     df_rat = df / (df - 2)
 
-    for i in 1:n_cand
-        # kx = k(X, Xcand[i,:]) - use column view from pre-computed matrix
-        kx = @view K_X_cand[:, i]
+    @inbounds for (i, idx) in enumerate(cand_idx)
+        # kx = k(X, Xcand[idx,:])
+        _compute_kernel_vector_row!(kx, gp.X, Xcand, idx, gp.d)
 
         # Kikx = Ki * kx (in-place)
         mul!(Kikx, Ki, kx)
@@ -144,28 +193,77 @@ function alc_gp(gp::GP{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
         # mui = 1 + g - kx' * Ki * kx
         mui = one(T) + gp.g - dot(kx, Kikx)
 
-        # Skip if numerical problems
         if mui <= sqrt(eps(T))
             alc[i] = T(-Inf)
             continue
         end
 
-        # gvec = -Kikx / mui (in-place)
         inv_mui = one(T) / mui
         @inbounds for j in 1:n
             gvec[j] = -Kikx[j] * inv_mui
         end
 
-        # kxy = k(Xcand[i,:], Xref) - use row view from pre-computed matrix
-        kxy = @view K_cand_ref[i, :]
+        # kxy = k(Xcand[idx,:], Xref)
+        _compute_kernel_vector_row!(kxy, Xref, Xcand, idx, gp.d)
 
-        # Compute ALC contribution using SIMD-optimized inner sum
-        alc_sum = _alc_inner_sum(k_ref, gvec, kxy, mui, inv_mui, gp.phi, df, n, n_ref)
-
-        alc[i] = alc_sum * df_rat / n_ref
+        if n_ref == 1
+            kg = dot(k_ref_vec, gvec)
+            kxy_val = kxy[1]
+            ktKikx = kg * kg * mui + 2 * kg * kxy_val + kxy_val * kxy_val * inv_mui
+            alc[i] = (gp.phi / df) * df_rat * ktKikx
+        else
+            alc_sum = _alc_inner_sum(k_ref, gvec, kxy, mui, inv_mui, gp.phi, df, n, n_ref)
+            alc[i] = alc_sum * df_rat / n_ref
+        end
     end
 
     return alc
+end
+
+"""
+    alc_gp(gp, Xcand, Xref)
+
+Compute Active Learning Cohn (ALC) acquisition values.
+
+ALC measures expected variance reduction at reference points Xref
+if we were to add each candidate point from Xcand to the design.
+"""
+function alc_gp(gp::GP{T}, Xcand::AbstractMatrix{T}, Xref::AbstractMatrix{T}) where {T}
+    n_cand = size(Xcand, 1)
+    alc = Vector{T}(undef, n_cand)
+    _alc_gp_idx!(alc, gp, Xcand, 1:n_cand, Xref)
+    return alc
+end
+
+"""
+    _mspe_gp_idx!(mspe, gp, Xcand, cand_idx, Xref)
+
+Internal low-allocation MSPE kernel for candidate indices.
+"""
+function _mspe_gp_idx!(mspe::AbstractVector{T}, gp::GP{T},
+                       Xcand::AbstractMatrix{T},
+                       cand_idx::AbstractVector{<:Integer},
+                       Xref::AbstractMatrix{T}) where {T}
+    n = size(gp.X, 1)
+    df = T(n)
+
+    # Reuse mspe buffer to store ALC first
+    _alc_gp_idx!(mspe, gp, Xcand, cand_idx, Xref)
+
+    # Predict at reference locations
+    pred_ref = pred_gp(gp, Xref; lite=true)
+    s2avg = mean(pred_ref.s2)
+
+    # Compute MSPE scaling factors
+    dnp = (df + one(T)) / (df - one(T))
+    dnp2 = dnp * (df - 2) / df
+
+    # MSPE = dnp * s2avg - dnp2 * alc
+    @inbounds for i in 1:length(cand_idx)
+        mspe[i] = dnp * s2avg - dnp2 * mspe[i]
+    end
+
+    return mspe
 end
 
 """
@@ -183,27 +281,9 @@ MSPE is related to ALC and includes the current prediction variance.
 # Returns
 - `Vector`: MSPE values for each candidate point
 """
-function mspe_gp(gp::GP{T}, Xcand::Matrix{T}, Xref::Matrix{T}) where {T}
-    n = size(gp.X, 1)
+function mspe_gp(gp::GP{T}, Xcand::AbstractMatrix{T}, Xref::AbstractMatrix{T}) where {T}
     n_cand = size(Xcand, 1)
-    df = T(n)
-
-    # Compute ALC first
-    alc_vals = alc_gp(gp, Xcand, Xref)
-
-    # Predict at reference locations
-    pred_ref = pred_gp(gp, Xref; lite=true)
-    s2avg = mean(pred_ref.s2)
-
-    # Compute MSPE scaling factors
-    dnp = (df + one(T)) / (df - one(T))
-    dnp2 = dnp * (df - 2) / df
-
-    # MSPE = dnp * s2avg - dnp2 * alc
     mspe = Vector{T}(undef, n_cand)
-    for i in 1:n_cand
-        mspe[i] = dnp * s2avg - dnp2 * alc_vals[i]
-    end
-
+    _mspe_gp_idx!(mspe, gp, Xcand, 1:n_cand, Xref)
     return mspe
 end

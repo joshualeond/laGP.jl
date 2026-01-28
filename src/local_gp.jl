@@ -69,10 +69,6 @@ function lagp(Xref::Vector{T}, start::Int, endpt::Int, X::Matrix{T}, Z::Vector{T
 
     # Initialize with nearest neighbors
     local_indices = sorted_indices[1:start]
-    available_indices = Set(sorted_indices[(start + 1):n_needed])
-
-    # Pre-allocate vector for available indices
-    avail_vec = Vector{Int}(undef, n - start)
 
     # Build local design matrices (copy needed since GP stores references)
     X_local = X[local_indices, :]
@@ -81,68 +77,65 @@ function lagp(Xref::Vector{T}, start::Int, endpt::Int, X::Matrix{T}, Z::Vector{T
     # Create local GP
     gp = new_gp(X_local, Z_local, T(d), T(g))
 
-    # Reference point as matrix
-    Xref_mat = reshape(Xref, 1, m)
+    # Reference point as matrix (avoid reshaped views in hot loops)
+    Xref_mat = Matrix{T}(undef, 1, m)
+    @inbounds for j in 1:m
+        Xref_mat[1, j] = Xref[j]
+    end
 
-    # Sequential design selection using incremental Cholesky updates
-    while length(local_indices) < endpt && !isempty(available_indices)
-        # Find next point to add
-        local best_global_idx::Int
-        if method == :nn
-            # Just add next nearest neighbor
-            for idx in sorted_indices
-                if idx in available_indices
-                    best_global_idx = idx
-                    break
+    if method == :nn
+        # Pure nearest-neighbor expansion (distance order)
+        for pos in (start + 1):endpt
+            best_global_idx = sorted_indices[pos]
+            push!(local_indices, best_global_idx)
+            x_new = @view X[best_global_idx, :]
+            z_new = Z[best_global_idx]
+            extend_gp!(gp, Vector{T}(x_new), z_new)
+        end
+    else
+        # Candidate pool and availability mask
+        cand_pool = @view sorted_indices[(start + 1):n_needed]
+        available = falses(n)
+        for idx in cand_pool
+            available[idx] = true
+        end
+        n_avail = length(cand_pool)
+
+        max_cand = min(close, n_avail)
+        cand_buf = Vector{Int}(undef, max_cand)
+        acq_buf = Vector{T}(undef, max_cand)
+
+        # Sequential design selection using incremental Cholesky updates
+        while length(local_indices) < endpt && n_avail > 0
+            max_take = min(close, n_avail)
+            n_cand = 0
+            for idx in cand_pool
+                if available[idx]
+                    n_cand += 1
+                    cand_buf[n_cand] = idx
+                    n_cand == max_take && break
                 end
             end
-        else
-            # Use acquisition function with candidate pre-filtering
-            # Only evaluate nearest `close` candidates for efficiency
-            n_avail = length(available_indices)
-            if n_avail > close
-                # Pre-filter to nearest `close` candidates
-                idx = 0
-                for si in sorted_indices
-                    if si in available_indices
-                        idx += 1
-                        avail_vec[idx] = si
-                        idx >= close && break
-                    end
-                end
-                n_cand = idx
-            else
-                # Use all available candidates
-                idx = 0
-                for ai in available_indices
-                    idx += 1
-                    avail_vec[idx] = ai
-                end
-                n_cand = n_avail
-            end
-            avail_view = @view avail_vec[1:n_cand]
-            Xcand = X[avail_view, :]
+            cand_view = @view cand_buf[1:n_cand]
 
             if method == :alc
-                acq_vals = alc_gp(gp, Xcand, Xref_mat)
-                best_local_idx = argmax(acq_vals)
+                _alc_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat)
+                best_local_idx = argmax(@view acq_buf[1:n_cand])
             else  # method == :mspe
-                acq_vals = mspe_gp(gp, Xcand, Xref_mat)
-                best_local_idx = argmin(acq_vals)
+                _mspe_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat)
+                best_local_idx = argmin(@view acq_buf[1:n_cand])
             end
 
-            best_global_idx = avail_view[best_local_idx]
+            best_global_idx = cand_view[best_local_idx]
+            push!(local_indices, best_global_idx)
+            available[best_global_idx] = false
+            n_avail -= 1
+
+            # Extend GP with new point using O(n²) incremental Cholesky update
+            x_new = @view X[best_global_idx, :]
+            z_new = Z[best_global_idx]
+            extend_gp!(gp, Vector{T}(x_new), z_new)
         end
-
-        # Update tracking
-        push!(local_indices, best_global_idx)
-        delete!(available_indices, best_global_idx)
-
-        # Extend GP with new point using O(n²) incremental Cholesky update
-        # instead of O(n³) full rebuild
-        x_new = @view X[best_global_idx, :]
-        z_new = Z[best_global_idx]
-        extend_gp!(gp, Vector{T}(x_new), z_new)
     end
 
     # Make final prediction
@@ -276,10 +269,6 @@ function _agp_single(X::Matrix{T}, Z::Vector{T}, Xref::AbstractVector{T},
 
     # Initialize with nearest neighbors
     local_indices = sorted_indices[1:start]
-    available_indices = Set(sorted_indices[(start + 1):n_needed])
-
-    # Pre-allocate vector for available indices
-    avail_vec = Vector{Int}(undef, n - start)
 
     # Build local design matrices (copy needed since GP stores references)
     X_local = X[local_indices, :]
@@ -294,64 +283,59 @@ function _agp_single(X::Matrix{T}, Z::Vector{T}, Xref::AbstractVector{T},
         Xref_mat[1, j] = Xref[j]
     end
 
-    # Sequential design selection using incremental Cholesky updates
-    while length(local_indices) < endpt && !isempty(available_indices)
-        # Find next point to add
-        local best_global_idx::Int
-        if method == :nn
-            for idx in sorted_indices
-                if idx in available_indices
-                    best_global_idx = idx
-                    break
+    if method == :nn
+        # Pure nearest-neighbor expansion (distance order)
+        for pos in (start + 1):endpt
+            best_global_idx = sorted_indices[pos]
+            push!(local_indices, best_global_idx)
+            x_new = @view X[best_global_idx, :]
+            z_new = Z[best_global_idx]
+            extend_gp!(gp, Vector{T}(x_new), z_new)
+        end
+    else
+        # Candidate pool and availability mask
+        cand_pool = @view sorted_indices[(start + 1):n_needed]
+        available = falses(n)
+        for idx in cand_pool
+            available[idx] = true
+        end
+        n_avail = length(cand_pool)
+
+        max_cand = min(close, n_avail)
+        cand_buf = Vector{Int}(undef, max_cand)
+        acq_buf = Vector{T}(undef, max_cand)
+
+        # Sequential design selection using incremental Cholesky updates
+        while length(local_indices) < endpt && n_avail > 0
+            max_take = min(close, n_avail)
+            n_cand = 0
+            for idx in cand_pool
+                if available[idx]
+                    n_cand += 1
+                    cand_buf[n_cand] = idx
+                    n_cand == max_take && break
                 end
             end
-        else
-            # Use acquisition function with candidate pre-filtering
-            # Only evaluate nearest `close` candidates for efficiency
-            n_avail = length(available_indices)
-            if n_avail > close
-                # Pre-filter to nearest `close` candidates
-                idx = 0
-                for si in sorted_indices
-                    if si in available_indices
-                        idx += 1
-                        avail_vec[idx] = si
-                        idx >= close && break
-                    end
-                end
-                n_cand = idx
-            else
-                # Use all available candidates
-                idx = 0
-                for ai in available_indices
-                    idx += 1
-                    avail_vec[idx] = ai
-                end
-                n_cand = n_avail
-            end
-            avail_view = @view avail_vec[1:n_cand]
-            Xcand = X[avail_view, :]
+            cand_view = @view cand_buf[1:n_cand]
 
             if method == :alc
-                acq_vals = alc_gp(gp, Xcand, Xref_mat)
-                best_local_idx = argmax(acq_vals)
+                _alc_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat)
+                best_local_idx = argmax(@view acq_buf[1:n_cand])
             else
-                acq_vals = mspe_gp(gp, Xcand, Xref_mat)
-                best_local_idx = argmin(acq_vals)
+                _mspe_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat)
+                best_local_idx = argmin(@view acq_buf[1:n_cand])
             end
 
-            best_global_idx = avail_view[best_local_idx]
+            best_global_idx = cand_view[best_local_idx]
+            push!(local_indices, best_global_idx)
+            available[best_global_idx] = false
+            n_avail -= 1
+
+            # Extend GP with new point using O(n²) incremental Cholesky update
+            x_new = @view X[best_global_idx, :]
+            z_new = Z[best_global_idx]
+            extend_gp!(gp, Vector{T}(x_new), z_new)
         end
-
-        # Update tracking
-        push!(local_indices, best_global_idx)
-        delete!(available_indices, best_global_idx)
-
-        # Extend GP with new point using O(n²) incremental Cholesky update
-        # instead of O(n³) full rebuild
-        x_new = @view X[best_global_idx, :]
-        z_new = Z[best_global_idx]
-        extend_gp!(gp, Vector{T}(x_new), z_new)
     end
 
     # Perform MLE if requested

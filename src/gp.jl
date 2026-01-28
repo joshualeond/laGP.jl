@@ -435,7 +435,8 @@ function extend_gp!(gp::GP{T}, x_new::AbstractVector{T}, z_new::T) where {T}
     # Forward solve: l = L⁻¹ k using existing Cholesky
     # This is O(n²) via forward substitution
     L = gp.chol.L
-    l = L \ k
+    l = Vector{T}(undef, n)
+    ldiv!(l, L, k)
 
     # Compute λ = sqrt(κ + g - lᵀl)
     l_dot_l = dot(l, l)
@@ -448,8 +449,20 @@ function extend_gp!(gp::GP{T}, x_new::AbstractVector{T}, z_new::T) where {T}
         λ = sqrt(λ_sq)
     end
 
-    # Build new Cholesky factor L_new = [L 0; lᵀ λ] using block concatenation
-    L_new = [L zeros(T, n); l' λ]
+    # Build new Cholesky factor L_new = [L 0; lᵀ λ] without block concatenation
+    L_new = Matrix{T}(undef, n + 1, n + 1)
+    @inbounds begin
+        for j in 1:n
+            for i in 1:n
+                L_new[i, j] = (i >= j) ? L[i, j] : zero(T)
+            end
+            L_new[j, n + 1] = zero(T)
+        end
+        for j in 1:n
+            L_new[n + 1, j] = l[j]
+        end
+        L_new[n + 1, n + 1] = λ
+    end
     gp.chol = Cholesky(L_new, 'L', 0)
 
     # Update Ki incrementally using block matrix inversion formula
@@ -458,7 +471,8 @@ function extend_gp!(gp::GP{T}, x_new::AbstractVector{T}, z_new::T) where {T}
     # Then:
     #   Ki_new = [Ki + v*vᵀ/s   -v/s  ]
     #            [   -vᵀ/s       1/s  ]
-    v = gp.Ki * k
+    v = Vector{T}(undef, n)
+    mul!(v, gp.Ki, k)
     s = λ_sq  # Already computed as κ + g - lᵀl (note: lᵀl = kᵀ Ki k when L = chol)
 
     # Handle case where s is very small
@@ -467,20 +481,38 @@ function extend_gp!(gp::GP{T}, x_new::AbstractVector{T}, z_new::T) where {T}
     end
     inv_s = one(T) / s
 
-    # Build Ki_new using efficient in-place update of upper-left block
-    # followed by block concatenation for new row/column
-    v_scaled = v .* inv_s
-    gp.Ki .+= v * v_scaled'  # Update upper-left block in-place
-    gp.Ki = [gp.Ki -v_scaled; -v_scaled' inv_s]
+    # Build Ki_new without block concatenation
+    v_scaled = Vector{T}(undef, n)
+    @inbounds for i in 1:n
+        v_scaled[i] = v[i] * inv_s
+    end
+    Ki_new = Matrix{T}(undef, n + 1, n + 1)
+    Ki_ul = @view Ki_new[1:n, 1:n]
+    copyto!(Ki_ul, gp.Ki)
+    LinearAlgebra.BLAS.ger!(one(T), v, v_scaled, Ki_ul)
+    @inbounds for i in 1:n
+        Ki_new[i, n + 1] = -v_scaled[i]
+        Ki_new[n + 1, i] = -v_scaled[i]
+    end
+    Ki_new[n + 1, n + 1] = inv_s
+    gp.Ki = Ki_new
 
     # Update X by appending new row
-    gp.X = vcat(gp.X, x_new')
+    X_new = Matrix{T}(undef, n + 1, m)
+    copyto!(@view(X_new[1:n, 1:m]), gp.X)
+    @inbounds for j in 1:m
+        X_new[n + 1, j] = x_new[j]
+    end
+    gp.X = X_new
 
     # Update Z by appending new value
-    push!(gp.Z, z_new)
+    Z_new = Vector{T}(undef, n + 1)
+    copyto!(Z_new, gp.Z)
+    Z_new[n + 1] = z_new
+    gp.Z = Z_new
 
     # Update KiZ incrementally using block structure
-    vᵀZ = dot(v, gp.Z[1:n])
+    vᵀZ = dot(v, @view gp.Z[1:n])
     gp.KiZ .+= v .* ((vᵀZ - z_new) * inv_s)
     push!(gp.KiZ, (z_new - vᵀZ) * inv_s)
 
