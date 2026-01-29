@@ -422,7 +422,7 @@ function extend_gp!(gp::GP{T}, x_new::AbstractVector{T}, z_new::T) where {T}
     inv_d = one(T) / gp.d
     @inbounds for i in 1:n
         dist_sq = zero(T)
-        for j in 1:m
+        @turbo for j in 1:m
             diff = gp.X[i, j] - x_new[j]
             dist_sq += diff * diff
         end
@@ -906,7 +906,7 @@ function extend_gp_sep!(gp::GPsep{T}, x_new::AbstractVector{T}, z_new::T) where 
     k = Vector{T}(undef, n)
     @inbounds for i in 1:n
         weighted_dist_sq = zero(T)
-        for j in 1:m
+        @turbo for j in 1:m
             diff = gp.X[i, j] - x_new[j]
             weighted_dist_sq += diff * diff / gp.d[j]
         end

@@ -405,7 +405,7 @@ function _compute_kernel_vector_sep!(k::AbstractVector{T}, X::AbstractMatrix{T},
     n, m = size(X)
     @inbounds for i in 1:n
         dist_sq = zero(T)
-        for j in 1:m
+        @turbo for j in 1:m
             diff = X[i, j] - x[j]
             dist_sq += diff * diff / d[j]
         end
@@ -425,7 +425,7 @@ function _compute_kernel_vector_row_sep!(k::AbstractVector{T}, X1::AbstractMatri
     n, m = size(X1)
     @inbounds for i in 1:n
         dist_sq = zero(T)
-        for j in 1:m
+        @turbo for j in 1:m
             diff = X1[i, j] - X2[row, j]
             dist_sq += diff * diff / d[j]
         end
@@ -447,7 +447,7 @@ function _compute_kernel_sep!(K::AbstractMatrix{T}, X1::AbstractMatrix{T},
     @inbounds for j in 1:n2
         for i in 1:n1
             dist_sq = zero(T)
-            for k in 1:m
+            @turbo for k in 1:m
                 diff = X1[i, k] - X2[j, k]
                 dist_sq += diff * diff / d[k]
             end
@@ -534,7 +534,7 @@ function _alc_gp_idx!(alc::AbstractVector{T}, gp::GPsep{T},
         if n_ref == 1
             # kxy scalar using separable kernel
             dist_sq = zero(T)
-            for j in 1:m
+            @turbo for j in 1:m
                 diff = Xref[1, j] - Xcand[idx, j]
                 dist_sq += diff * diff / gp.d[j]
             end

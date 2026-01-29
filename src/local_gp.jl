@@ -15,9 +15,9 @@ function _compute_squared_distances(X::Matrix{T}, Xref::AbstractVector{T}) where
     n = size(X, 1)
     m = length(Xref)
     distances = Vector{T}(undef, n)
-    @turbo for i in 1:n
+    @inbounds for i in 1:n
         dist_sq = zero(T)
-        for j in 1:m
+        @turbo for j in 1:m
             diff = X[i, j] - Xref[j]
             dist_sq += diff * diff
         end
