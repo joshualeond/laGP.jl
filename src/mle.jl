@@ -451,6 +451,83 @@ function mle_gp_sep!(gp::GPsep{T}, param::Symbol, dim::Int=1;
 end
 
 """
+    mle_gp_sep_d!(gp; drange, maxit=100, verb=0, dab=(3/2, nothing))
+
+Optimize separable lengthscales only (d vector) with nugget g fixed.
+
+This mirrors laGP's `mleGPsep` behavior, but without updating g.
+
+# Arguments
+- `gp::GPsep`: Separable Gaussian Process model (modified in-place)
+- `drange::Union{Tuple,Vector}`: range for d parameters
+- `maxit::Int`: maximum iterations
+- `verb::Int`: verbosity level
+- `dab::Tuple`: (shape, scale) for d prior
+
+# Returns
+- `NamedTuple`: (d=..., tot_its=..., msg=...)
+"""
+function mle_gp_sep_d!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple{Real,Real}}},
+                       maxit::Int=100, verb::Int=0,
+                       dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
+    m = length(gp.d)
+
+    # Convert drange to per-dimension ranges
+    if drange isa Tuple
+        d_ranges = [drange for _ in 1:m]
+    else
+        @assert length(drange) == m "drange must have $(m) elements"
+        d_ranges = drange
+    end
+
+    # Compute prior parameters
+    d_shape = T(dab[1])
+    d_scales = if dab[2] === nothing
+        [compute_prior_scale(T(sqrt(r[1] * r[2])), d_shape) for r in d_ranges]
+    else
+        fill(T(dab[2]), m)
+    end
+
+    # Parameter vector: [d[1], ..., d[m]] in LOG SPACE
+    x0 = log.(gp.d)
+    lower = [log(T(r[1])) for r in d_ranges]
+    upper = [log(T(r[2])) for r in d_ranges]
+
+    # Objective: negative log-POSTERIOR (with fixed g)
+    function neg_posterior!(F, G, x)
+        d_new = exp.(x)
+        update_gp_sep!(gp; d=d_new)
+
+        if G !== nothing
+            grad = dllik_gp_sep(gp; dg=false, dd=true)
+            G[1:m] .= -grad.dlld .* d_new
+            for k in 1:m
+                G[k] += -dlog_invgamma(d_new[k], d_shape, d_scales[k]) * d_new[k]
+            end
+        end
+
+        if F !== nothing
+            nll = -llik_gp_sep(gp)
+            for k in 1:m
+                nll += -log_invgamma(d_new[k], d_shape, d_scales[k])
+            end
+            return nll
+        end
+    end
+
+    result = optimize(only_fg!(neg_posterior!), lower, upper, x0,
+                      Fminbox(LBFGS()),
+                      Optim.Options(iterations=maxit, g_tol=T(1e-6),
+                                    show_trace=(verb > 0)))
+
+    final_x = minimizer(result)
+    update_gp_sep!(gp; d=exp.(final_x))
+
+    return (d=copy(gp.d), tot_its=result.iterations,
+            msg=converged(result) ? "converged" : "max iterations reached")
+end
+
+"""
     jmle_gp_sep!(gp; drange, grange, maxit=100, verb=0, dab=(3/2, nothing), gab=(3/2, nothing))
 
 Joint MLE optimization of lengthscales and nugget for GPsep.
@@ -552,8 +629,8 @@ end
 
 Compute default arguments for lengthscale parameters (separable version).
 
-Following R's laGP convention, uses the TOTAL pairwise distance to compute
-initial ranges (same for all dimensions), then MLE finds per-dimension scaling.
+Mirrors laGP's `darg` behavior: uses pairwise squared distances to set
+start/min/max, then applies those same ranges to each dimension.
 
 # Arguments
 - `X::Matrix`: design matrix
@@ -588,15 +665,17 @@ function darg_sep(X::Matrix{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
     sort!(distances)
 
     # Compute quantiles using R's type 7 method
-    # start = 10th percentile (divided by m to get per-dimension scale)
-    d_start = _quantile_type7(distances, 0.1) / m
+    # start = 10th percentile of pairwise squared distances
+    d_start = _quantile_type7(distances, 0.1)
 
-    # max: R uses tmax=10 by default for separable; we use max distance
-    # scaled appropriately for per-dimension lengthscale
+    # max = max pairwise squared distance
     d_max = maximum(distances)
 
-    # min = sqrt(machine epsilon), matching R's default tmin
-    d_min = sqrt(eps(T))
+    # min = half of the minimum non-zero distance (bounded below by sqrt(eps))
+    d_min = min(distances[1] / 2, d_max)
+    if d_min < sqrt(eps(T))
+        d_min = sqrt(eps(T))
+    end
 
     # Return same range for all dimensions - MLE will differentiate them
     results = Vector{NamedTuple{(:start, :min, :max, :mle),Tuple{T,T,T,Bool}}}(undef, m)

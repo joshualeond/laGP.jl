@@ -55,9 +55,13 @@ export darg_sep
 export alc_gp
 export mspe_gp
 
-# Local GP functions
+# Local GP functions (isotropic)
 export lagp
 export agp
+
+# Local GP functions (separable)
+export lagp_sep
+export agp_sep
 
 include("abstractgps_adapter.jl")
 include("types.jl")

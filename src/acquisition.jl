@@ -389,3 +389,184 @@ function mspe_gp(gp::GP{T}, Xcand::AbstractMatrix{T}, Xref::AbstractMatrix{T}) w
     _mspe_gp_idx!(mspe, gp, Xcand, 1:n_cand, Xref)
     return mspe
 end
+
+# ============================================================================
+# Separable GP Acquisition Functions
+# ============================================================================
+
+"""
+    _compute_kernel_vector_sep!(k, X, x, d)
+
+Compute separable squared exponential kernel between rows of X and vector x.
+k[i] = exp(-sum((X[i,j] - x[j])^2 / d[j] for j in 1:m))
+"""
+function _compute_kernel_vector_sep!(k::AbstractVector{T}, X::AbstractMatrix{T},
+                                     x::AbstractVector{T}, d::Vector{T}) where {T}
+    n, m = size(X)
+    @inbounds for i in 1:n
+        dist_sq = zero(T)
+        for j in 1:m
+            diff = X[i, j] - x[j]
+            dist_sq += diff * diff / d[j]
+        end
+        k[i] = exp(-dist_sq)
+    end
+    return k
+end
+
+"""
+    _compute_kernel_vector_row_sep!(k, X1, X2, row, d)
+
+Compute separable kernel between rows of X1 and a specific row of X2.
+k[i] = exp(-sum((X1[i,j] - X2[row,j])^2 / d[j] for j in 1:m))
+"""
+function _compute_kernel_vector_row_sep!(k::AbstractVector{T}, X1::AbstractMatrix{T},
+                                         X2::AbstractMatrix{T}, row::Int, d::Vector{T}) where {T}
+    n, m = size(X1)
+    @inbounds for i in 1:n
+        dist_sq = zero(T)
+        for j in 1:m
+            diff = X1[i, j] - X2[row, j]
+            dist_sq += diff * diff / d[j]
+        end
+        k[i] = exp(-dist_sq)
+    end
+    return k
+end
+
+"""
+    _compute_kernel_sep!(K, X1, X2, d)
+
+Compute separable squared exponential kernel between rows of X1 and X2.
+K[i,j] = exp(-sum((X1[i,k] - X2[j,k])^2 / d[k] for k in 1:m))
+"""
+function _compute_kernel_sep!(K::AbstractMatrix{T}, X1::AbstractMatrix{T},
+                              X2::AbstractMatrix{T}, d::Vector{T}) where {T}
+    n1, m = size(X1)
+    n2 = size(X2, 1)
+    @inbounds for j in 1:n2
+        for i in 1:n1
+            dist_sq = zero(T)
+            for k in 1:m
+                diff = X1[i, k] - X2[j, k]
+                dist_sq += diff * diff / d[k]
+            end
+            K[i, j] = exp(-dist_sq)
+        end
+    end
+    return K
+end
+
+"""
+    _alc_gp_idx!(alc, gp::GPsep, Xcand, cand_idx, Xref)
+
+Internal low-allocation ALC kernel for separable GP.
+Computes ALC criteria for rows in `Xcand` specified by `cand_idx`.
+"""
+function _alc_gp_idx!(alc::AbstractVector{T}, gp::GPsep{T},
+                      Xcand::AbstractMatrix{T},
+                      cand_idx::AbstractVector{<:Integer},
+                      Xref::AbstractMatrix{T}) where {T}
+    work = ALCWorkspace{T}()
+    return _alc_gp_idx!(alc, gp, Xcand, cand_idx, Xref, work)
+end
+
+function _alc_gp_idx!(alc::AbstractVector{T}, gp::GPsep{T},
+                      Xcand::AbstractMatrix{T},
+                      cand_idx::AbstractVector{<:Integer},
+                      Xref::AbstractMatrix{T},
+                      work::ALCWorkspace{T}) where {T}
+    n = size(gp.X, 1)
+    n_ref = size(Xref, 1)
+    df = T(n)
+
+    _ensure_alc_workspace!(work, n, n_ref)
+
+    # Pre-compute k(X, Xref) using separable kernel
+    if n_ref == 1
+        k_ref_vec = work.k_ref_vec
+        _compute_kernel_vector_row_sep!(k_ref_vec, gp.X, Xref, 1, gp.d)
+    else
+        k_ref = work.k_ref
+        _compute_kernel_sep!(k_ref, gp.X, Xref, gp.d)
+    end
+
+    # Use cached Ki (already computed and stored in GP struct)
+    Ki = Symmetric(gp.Ki)
+
+    # Workspace vectors
+    kx = work.kx
+    Kikx = work.Kikx
+    gvec = work.gvec
+    kxy = work.kxy
+
+    df_rat = df / (df - 2)
+    m = size(gp.X, 2)
+
+    @inbounds for (i, idx) in enumerate(cand_idx)
+        # kx = k(X, Xcand[idx,:]) using separable kernel
+        _compute_kernel_vector_row_sep!(kx, gp.X, Xcand, idx, gp.d)
+
+        # Kikx = Ki * kx (in-place)
+        if n <= 64
+            _matvec_small!(Kikx, gp.Ki, kx)
+        else
+            mul!(Kikx, Ki, kx)
+        end
+
+        # mui = 1 + g - kx' * Ki * kx
+        dot_kx = zero(T)
+        @turbo for j in 1:n
+            dot_kx += kx[j] * Kikx[j]
+        end
+        mui = one(T) + gp.g - dot_kx
+
+        if mui <= sqrt(eps(T))
+            alc[i] = T(-Inf)
+            continue
+        end
+
+        inv_mui = one(T) / mui
+        @turbo for j in 1:n
+            gvec[j] = -Kikx[j] * inv_mui
+        end
+
+        if n_ref == 1
+            # kxy scalar using separable kernel
+            dist_sq = zero(T)
+            for j in 1:m
+                diff = Xref[1, j] - Xcand[idx, j]
+                dist_sq += diff * diff / gp.d[j]
+            end
+            kxy_val = exp(-dist_sq)
+
+            kg = zero(T)
+            k_ref_vec = work.k_ref_vec
+            @turbo for j in 1:n
+                kg += k_ref_vec[j] * gvec[j]
+            end
+            ktKikx = kg * kg * mui + 2 * kg * kxy_val + kxy_val * kxy_val * inv_mui
+            alc[i] = (gp.phi / df) * df_rat * ktKikx
+        else
+            # kxy = k(Xcand[idx,:], Xref) using separable kernel
+            _compute_kernel_vector_row_sep!(kxy, Xref, Xcand, idx, gp.d)
+            k_ref = work.k_ref
+            alc_sum = _alc_inner_sum(k_ref, gvec, kxy, mui, inv_mui, gp.phi, df, n, n_ref)
+            alc[i] = alc_sum * df_rat / n_ref
+        end
+    end
+
+    return alc
+end
+
+"""
+    alc_gp(gp::GPsep, Xcand, Xref)
+
+Compute Active Learning Cohn (ALC) acquisition values for separable GP.
+"""
+function alc_gp(gp::GPsep{T}, Xcand::AbstractMatrix{T}, Xref::AbstractMatrix{T}) where {T}
+    n_cand = size(Xcand, 1)
+    alc = Vector{T}(undef, n_cand)
+    _alc_gp_idx!(alc, gp, Xcand, 1:n_cand, Xref)
+    return alc
+end
