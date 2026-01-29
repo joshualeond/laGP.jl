@@ -1,0 +1,16 @@
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+LatinHypercubeSampling = "a5e1c1ea-c99a-51d3-a14d-a9a37257b02d"
+PDMats = "90014a1f-27ba-587c-ab20-58faa44d9150"
+laGP = "895baa0a-b668-4fc8-b1fe-ed27223c4cb2"
+
+[sources.laGP]
+path = ".."
+
+[compat]
+CairoMakie = "0.15"
+Distributions = "0.25"
+LatinHypercubeSampling = "1.9"
+PDMats = "0.11"
+julia = "1.10"

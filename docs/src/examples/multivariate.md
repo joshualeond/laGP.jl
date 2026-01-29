@@ -1,6 +1,6 @@
 # Multivariate Inputs with ARD
 
-This example demonstrates how to fit a **separable GP** (also known as ARD - Automatic Relevance Determination) to multi-dimensional input data, allowing the model to learn different lengthscales for each input dimension.
+This example demonstrates how to fit a **separable GP** (also known as ARD - Automatic Relevance Determination) to multi-dimensional input data, allowing the model to learn different lengthscales for each input dimension. We also compare it to an **isotropic GP** to show why ARD is beneficial for anisotropic functions.
 
 ## Why Per-Dimension Lengthscales?
 
@@ -20,6 +20,15 @@ k(x, x') = exp(-Σₖ (xₖ - x'ₖ)² / dₖ)
 
 A **smaller lengthscale** means the function varies more rapidly in that dimension (high sensitivity), while a **larger lengthscale** means smoother variation (low sensitivity). After fitting, the relative magnitudes of the lengthscales reveal which inputs matter most - hence "Automatic Relevance Determination."
 
+## The Problem with Isotropic
+
+When the true function is anisotropic, an isotropic GP must pick a single "compromise" lengthscale that:
+
+- Is **too large** for dimensions with rapid variation (underfitting those directions)
+- Is **too small** for dimensions with slow variation (overfitting noise in those directions)
+
+This leads to suboptimal predictions and a lower log-likelihood compared to a separable GP that can adapt to each dimension independently.
+
 ## Setup
 
 ```julia
@@ -30,11 +39,13 @@ using CairoMakie
 
 ## Generate Training Data
 
-We use a 2D test function from the tinygp tutorial:
+We use a 2D test function with **extreme anisotropy**:
 
 ```julia
-# Target function: y = sin(x₁) * cos(x₂ + x₁) + noise
-# This has anisotropic structure - the sin(x₁) term creates faster variation in x₁
+# Target function: y = sin(4*x₁) + 0.2*x₂ + noise
+# Extreme anisotropy:
+# - Fast oscillations in x₁ (needs small lengthscale)
+# - Nearly linear in x₂ (needs large lengthscale)
 
 Random.seed!(48392)
 
@@ -42,7 +53,7 @@ n = 100
 X = -5.0 .+ 10.0 .* rand(n, 2)  # Uniform on [-5, 5]²
 
 yerr = 0.1
-y = sin.(X[:, 1]) .* cos.(X[:, 2] .+ X[:, 1]) .+ yerr .* randn(n)
+y = sin.(4 .* X[:, 1]) .+ 0.2 .* X[:, 2] .+ yerr .* randn(n)
 
 println("Training data: $n points in 2D, noise σ = $yerr")
 ```
@@ -53,33 +64,83 @@ Use data-driven initialization for the lengthscales and nugget:
 
 ```julia
 # darg_sep returns ranges suitable for separable GP
-d_info = darg_sep(X)
+# darg returns ranges suitable for isotropic GP
+d_info_sep = darg_sep(X)
+d_info_iso = darg(X)
 g_info = garg(y)
 
-println("Lengthscale range: [$(d_info.ranges[1].min), $(d_info.ranges[1].max)]")
+println("Separable lengthscale range: [$(d_info_sep.ranges[1].min), $(d_info_sep.ranges[1].max)]")
+println("Isotropic lengthscale range: [$(d_info_iso.min), $(d_info_iso.max)]")
 println("Nugget range: [$(g_info.min), $(g_info.max)]")
 
-# Initial lengthscales (same for both dimensions)
-d_init = [d_info.ranges[1].start, d_info.ranges[2].start]
+# Set up optimization ranges
+grange = (g_info.min, g_info.max)
 ```
 
-## Create and Fit Separable GP
+## Fit Isotropic GP
+
+First, let's fit an isotropic GP to see its limitations:
 
 ```julia
-# Create GP with per-dimension lengthscales
-gp = new_gp_sep(X, y, d_init, g_info.start)
+# Create isotropic GP (single lengthscale for all dimensions)
+gp_iso = new_gp(X, y, d_info_iso.start, g_info.start)
 
-println("Initial: d = $(round.(gp.d, sigdigits=4)), g = $(round(gp.g, sigdigits=4))")
+# Optimize via joint MLE
+drange_iso = (d_info_iso.min, d_info_iso.max)
+result_iso = jmle_gp!(gp_iso; drange=drange_iso, grange=grange, verb=0)
+
+println("Isotropic GP:")
+println("  d = $(round(gp_iso.d, sigdigits=4))")
+println("  g = $(round(gp_iso.g, sigdigits=4))")
+println("  log-likelihood = $(round(llik_gp(gp_iso), sigdigits=4))")
+```
+
+The isotropic GP finds a single lengthscale that must serve all dimensions. This is a compromise value.
+
+## Fit Separable GP
+
+Now fit a separable GP that can learn per-dimension lengthscales:
+
+```julia
+# Initial lengthscales (same for both dimensions)
+d_init = [d_info_sep.ranges[1].start, d_info_sep.ranges[2].start]
+
+# Create GP with per-dimension lengthscales
+gp_sep = new_gp_sep(X, y, d_init, g_info.start)
 
 # Joint MLE optimization
-drange = (d_info.ranges[1].min, d_info.ranges[1].max)
-grange = (g_info.min, g_info.max)
+drange_sep = (d_info_sep.ranges[1].min, d_info_sep.ranges[1].max)
+result_sep = jmle_gp_sep!(gp_sep; drange=drange_sep, grange=grange, verb=0)
 
-result = jmle_gp_sep!(gp; drange=drange, grange=grange, verb=0)
-
-println("Optimized: d = $(round.(gp.d, sigdigits=4)), g = $(round(gp.g, sigdigits=4))")
-println("Log-likelihood: $(round(llik_gp_sep(gp), sigdigits=4))")
+println("Separable GP:")
+println("  d = $(round.(gp_sep.d, sigdigits=4))")
+println("  g = $(round(gp_sep.g, sigdigits=4))")
+println("  log-likelihood = $(round(llik_gp_sep(gp_sep), sigdigits=4))")
 ```
+
+## Comparing the Results
+
+Let's compare the two models:
+
+```julia
+llik_iso = llik_gp(gp_iso)
+llik_sep = llik_gp_sep(gp_sep)
+
+println("Log-likelihood comparison:")
+println("  Isotropic:  $(round(llik_iso, sigdigits=5))")
+println("  Separable:  $(round(llik_sep, sigdigits=5))")
+println("  Difference: $(round(llik_sep - llik_iso, sigdigits=4)) (separable is better)")
+
+println("\nLengthscale comparison:")
+println("  Isotropic d = $(round(gp_iso.d, sigdigits=4)) (single value)")
+println("  Separable d = $(round.(gp_sep.d, sigdigits=4)) (per-dimension)")
+```
+
+Key observations:
+
+1. **Higher log-likelihood**: The separable GP achieves a better fit to the data
+2. **Compromise lengthscale**: The isotropic `d` falls between the separable `d[1]` and `d[2]`
+3. **Captured anisotropy**: The separable GP correctly identifies that x₁ needs a shorter lengthscale (faster variation) than x₂
 
 ## Interpreting the Lengthscales
 
@@ -87,20 +148,20 @@ The optimized lengthscales reveal the function's anisotropic structure:
 
 ```julia
 println("Lengthscale interpretation:")
-println("  d[1] (x₁ dimension) = $(round(gp.d[1], sigdigits=4))")
-println("  d[2] (x₂ dimension) = $(round(gp.d[2], sigdigits=4))")
+println("  d[1] (x₁ dimension) = $(round(gp_sep.d[1], sigdigits=4))")
+println("  d[2] (x₂ dimension) = $(round(gp_sep.d[2], sigdigits=4))")
 
-if gp.d[1] < gp.d[2]
-    ratio = gp.d[2] / gp.d[1]
+if gp_sep.d[1] < gp_sep.d[2]
+    ratio = gp_sep.d[2] / gp_sep.d[1]
     println("  → x₁ is $(round(ratio, sigdigits=2))x more sensitive (smaller lengthscale)")
 end
 ```
 
-For our test function `sin(x₁) * cos(x₂ + x₁)`, we expect `d[1] < d[2]` because:
-- The `sin(x₁)` term creates oscillations primarily along the x₁ axis
-- The `cos(x₂ + x₁)` term couples both dimensions but adds smoother x₂ dependence
+For our test function `sin(4*x₁) + 0.2*x₂`, we expect `d[1] << d[2]` because:
+- The `sin(4*x₁)` term creates fast oscillations along the x₁ axis
+- The `0.2*x₂` term is nearly linear - very slow variation in x₂
 
-The MLE correctly identifies that x₁ requires a shorter lengthscale to capture the faster variation.
+The MLE correctly identifies this extreme anisotropy: x₁ requires a much shorter lengthscale to capture the rapid oscillations, while x₂ needs a large lengthscale for its gentle linear trend.
 
 ## Prediction
 
@@ -122,44 +183,90 @@ let idx = 1
     end
 end
 
-# Get predictions
-pred = pred_gp_sep(gp, XX; lite=true)
+# True function (no noise) for reference
+y_true = sin.(4 .* XX[:, 1]) .+ 0.2 .* XX[:, 2]
+true_grid = reshape(y_true, n_x1, n_x2)
+
+# Get predictions for both GPs
+pred_iso = pred_gp(gp_iso, XX; lite=true)
+pred_sep = pred_gp_sep(gp_sep, XX; lite=true)
 
 # Reshape for plotting
-mean_grid = reshape(pred.mean, n_x1, n_x2)
-std_grid = reshape(sqrt.(pred.s2), n_x1, n_x2)
+mean_iso_grid = reshape(pred_iso.mean, n_x1, n_x2)
+std_iso_grid = reshape(sqrt.(pred_iso.s2), n_x1, n_x2)
+mean_sep_grid = reshape(pred_sep.mean, n_x1, n_x2)
+std_sep_grid = reshape(sqrt.(pred_sep.s2), n_x1, n_x2)
 ```
 
 ## Visualization
 
 ```julia
-fig = Figure(size=(1000, 450))
+fig = Figure(size=(1100, 1200))
 
-# Predicted mean surface
-ax1 = Axis(fig[1, 1], xlabel="x₁", ylabel="x₂", title="Predicted Mean")
-hm1 = heatmap!(ax1, collect(x1_grid), collect(x2_grid), mean_grid', colormap=:viridis)
-scatter!(ax1, X[:, 1], X[:, 2], color=:white, markersize=5,
+# Use consistent colormap limits based on true function range
+clims = (minimum(y_true), maximum(y_true))
+
+# Row 1: True function (reference)
+ax_true = Axis(fig[1, 1:3], xlabel="x₁", ylabel="x₂",
+               title="True Function: y = sin(4x₁) + 0.2x₂")
+hm_true = heatmap!(ax_true, collect(x1_grid), collect(x2_grid), true_grid',
+                   colormap=:viridis, colorrange=clims)
+scatter!(ax_true, X[:, 1], X[:, 2], color=:white, markersize=4,
          strokecolor=:black, strokewidth=0.5)
-Colorbar(fig[1, 2], hm1, label="Mean")
+Colorbar(fig[1, 4], hm_true, label="y")
 
-# Prediction uncertainty
-ax2 = Axis(fig[1, 3], xlabel="x₁", ylabel="x₂", title="Prediction Uncertainty (Std)")
-hm2 = heatmap!(ax2, collect(x1_grid), collect(x2_grid), std_grid', colormap=:plasma)
-scatter!(ax2, X[:, 1], X[:, 2], color=:white, markersize=5,
+# Row 2: Isotropic GP
+ax1 = Axis(fig[2, 1], xlabel="x₁", ylabel="x₂", title="Isotropic GP: Mean")
+hm1 = heatmap!(ax1, collect(x1_grid), collect(x2_grid), mean_iso_grid',
+               colormap=:viridis, colorrange=clims)
+scatter!(ax1, X[:, 1], X[:, 2], color=:white, markersize=4,
          strokecolor=:black, strokewidth=0.5)
-Colorbar(fig[1, 4], hm2, label="Std")
+Colorbar(fig[2, 2], hm1, label="Mean")
 
-# Title with optimized hyperparameters
-Label(fig[0, :],
-      "Separable GP (ARD): d₁=$(round(gp.d[1], sigdigits=3)), d₂=$(round(gp.d[2], sigdigits=3)), g=$(round(gp.g, sigdigits=3))",
-      fontsize=16)
+ax2 = Axis(fig[2, 3], xlabel="x₁", ylabel="x₂", title="Isotropic GP: Uncertainty (Std)")
+hm2 = heatmap!(ax2, collect(x1_grid), collect(x2_grid), std_iso_grid', colormap=:plasma)
+scatter!(ax2, X[:, 1], X[:, 2], color=:white, markersize=4,
+         strokecolor=:black, strokewidth=0.5)
+Colorbar(fig[2, 4], hm2, label="Std")
+
+# Row 3: Separable GP
+ax3 = Axis(fig[3, 1], xlabel="x₁", ylabel="x₂", title="Separable GP (ARD): Mean")
+hm3 = heatmap!(ax3, collect(x1_grid), collect(x2_grid), mean_sep_grid',
+               colormap=:viridis, colorrange=clims)
+scatter!(ax3, X[:, 1], X[:, 2], color=:white, markersize=4,
+         strokecolor=:black, strokewidth=0.5)
+Colorbar(fig[3, 2], hm3, label="Mean")
+
+ax4 = Axis(fig[3, 3], xlabel="x₁", ylabel="x₂", title="Separable GP (ARD): Uncertainty (Std)")
+hm4 = heatmap!(ax4, collect(x1_grid), collect(x2_grid), std_sep_grid', colormap=:plasma)
+scatter!(ax4, X[:, 1], X[:, 2], color=:white, markersize=4,
+         strokecolor=:black, strokewidth=0.5)
+Colorbar(fig[3, 4], hm4, label="Std")
+
+# Summary labels
+iso_label = "Isotropic: d=$(round(gp_iso.d, sigdigits=3)), llik=$(round(llik_iso, sigdigits=4))"
+sep_label = "Separable: d₁=$(round(gp_sep.d[1], sigdigits=3)), d₂=$(round(gp_sep.d[2], sigdigits=3)), llik=$(round(llik_sep, sigdigits=4))"
+
+Label(fig[0, :], "Isotropic vs Separable GP Comparison\n$iso_label\n$sep_label", fontsize=14)
 
 fig
 ```
 
-![Separable GP Predictions](../assets/multivariate_example.png)
+![Isotropic vs Separable GP Comparison](../assets/multivariate_example.png)
 
-The left panel shows the predicted mean surface smoothly interpolating the training data (white points). The right panel shows prediction uncertainty - low near training points and higher in regions with sparse data.
+The comparison shows:
+- **Row 1 (True Function)**: The ground truth with fast oscillations in x₁ and a gentle linear trend in x₂
+- **Row 2 (Isotropic)**: The isotropic GP completely misses the oscillations - it treats them as noise (notice the huge nugget). The surface is nearly flat.
+- **Row 3 (Separable)**: The separable GP correctly captures the oscillating pattern by using a small lengthscale for x₁ and a large lengthscale for x₂
+
+## Summary: Isotropic vs Separable
+
+| Metric | Isotropic | Separable |
+|--------|-----------|-----------|
+| Lengthscale(s) | Single d (compromise) | d₁ (small), d₂ (large) |
+| Log-likelihood | Lower | Higher |
+| Captures anisotropy | No | Yes |
+| Parameters | 2 (d, g) | m+1 (d[1], ..., d[m], g) |
 
 ## Key Concepts
 
