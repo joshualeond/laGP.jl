@@ -90,51 +90,54 @@ function lagp(Xref::Vector{T}, start::Int, endpt::Int, X::Matrix{T}, Z::Vector{T
             push!(local_indices, best_global_idx)
             x_new = @view X[best_global_idx, :]
             z_new = Z[best_global_idx]
-            extend_gp!(gp, Vector{T}(x_new), z_new)
+            extend_gp!(gp, x_new, z_new)
         end
     else
-        # Candidate pool and availability mask
+        # Candidate pool (distance-ordered) with availability mask
         cand_pool = @view sorted_indices[(start + 1):n_needed]
-        available = falses(n)
-        for idx in cand_pool
-            available[idx] = true
-        end
-        n_avail = length(cand_pool)
+        n_pool = length(cand_pool)
+        available = trues(n_pool)
+        n_avail = n_pool
 
         max_cand = min(close, n_avail)
         cand_buf = Vector{Int}(undef, max_cand)
+        cand_pos_buf = Vector{Int}(undef, max_cand)
         acq_buf = Vector{T}(undef, max_cand)
+
+        alc_work = ALCWorkspace{T}()
 
         # Sequential design selection using incremental Cholesky updates
         while length(local_indices) < endpt && n_avail > 0
             max_take = min(close, n_avail)
             n_cand = 0
-            for idx in cand_pool
-                if available[idx]
+            @inbounds for pos in 1:n_pool
+                if available[pos]
                     n_cand += 1
-                    cand_buf[n_cand] = idx
+                    cand_pos_buf[n_cand] = pos
+                    cand_buf[n_cand] = cand_pool[pos]
                     n_cand == max_take && break
                 end
             end
             cand_view = @view cand_buf[1:n_cand]
 
             if method == :alc
-                _alc_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat)
+                _alc_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat, alc_work)
                 best_local_idx = argmax(@view acq_buf[1:n_cand])
             else  # method == :mspe
-                _mspe_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat)
+                _mspe_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat, alc_work)
                 best_local_idx = argmin(@view acq_buf[1:n_cand])
             end
 
-            best_global_idx = cand_view[best_local_idx]
+            best_pos = cand_pos_buf[best_local_idx]
+            best_global_idx = cand_buf[best_local_idx]
             push!(local_indices, best_global_idx)
-            available[best_global_idx] = false
+            available[best_pos] = false
             n_avail -= 1
 
             # Extend GP with new point using O(n²) incremental Cholesky update
             x_new = @view X[best_global_idx, :]
             z_new = Z[best_global_idx]
-            extend_gp!(gp, Vector{T}(x_new), z_new)
+            extend_gp!(gp, x_new, z_new)
         end
     end
 
@@ -290,51 +293,54 @@ function _agp_single(X::Matrix{T}, Z::Vector{T}, Xref::AbstractVector{T},
             push!(local_indices, best_global_idx)
             x_new = @view X[best_global_idx, :]
             z_new = Z[best_global_idx]
-            extend_gp!(gp, Vector{T}(x_new), z_new)
+            extend_gp!(gp, x_new, z_new)
         end
     else
-        # Candidate pool and availability mask
+        # Candidate pool (distance-ordered) with availability mask
         cand_pool = @view sorted_indices[(start + 1):n_needed]
-        available = falses(n)
-        for idx in cand_pool
-            available[idx] = true
-        end
-        n_avail = length(cand_pool)
+        n_pool = length(cand_pool)
+        available = trues(n_pool)
+        n_avail = n_pool
 
         max_cand = min(close, n_avail)
         cand_buf = Vector{Int}(undef, max_cand)
+        cand_pos_buf = Vector{Int}(undef, max_cand)
         acq_buf = Vector{T}(undef, max_cand)
+
+        alc_work = ALCWorkspace{T}()
 
         # Sequential design selection using incremental Cholesky updates
         while length(local_indices) < endpt && n_avail > 0
             max_take = min(close, n_avail)
             n_cand = 0
-            for idx in cand_pool
-                if available[idx]
+            @inbounds for pos in 1:n_pool
+                if available[pos]
                     n_cand += 1
-                    cand_buf[n_cand] = idx
+                    cand_pos_buf[n_cand] = pos
+                    cand_buf[n_cand] = cand_pool[pos]
                     n_cand == max_take && break
                 end
             end
             cand_view = @view cand_buf[1:n_cand]
 
             if method == :alc
-                _alc_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat)
+                _alc_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat, alc_work)
                 best_local_idx = argmax(@view acq_buf[1:n_cand])
             else
-                _mspe_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat)
+                _mspe_gp_idx!(acq_buf, gp, X, cand_view, Xref_mat, alc_work)
                 best_local_idx = argmin(@view acq_buf[1:n_cand])
             end
 
-            best_global_idx = cand_view[best_local_idx]
+            best_pos = cand_pos_buf[best_local_idx]
+            best_global_idx = cand_buf[best_local_idx]
             push!(local_indices, best_global_idx)
-            available[best_global_idx] = false
+            available[best_pos] = false
             n_avail -= 1
 
             # Extend GP with new point using O(n²) incremental Cholesky update
             x_new = @view X[best_global_idx, :]
             z_new = Z[best_global_idx]
-            extend_gp!(gp, Vector{T}(x_new), z_new)
+            extend_gp!(gp, x_new, z_new)
         end
     end
 

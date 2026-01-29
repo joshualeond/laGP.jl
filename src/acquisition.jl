@@ -3,6 +3,38 @@
 using LinearAlgebra: mul!, Symmetric
 using LoopVectorization: @turbo
 
+# Workspace to avoid allocations in tight ALC loops
+mutable struct ALCWorkspace{T}
+    k_ref_vec::Vector{T}
+    k_ref::Matrix{T}
+    kx::Vector{T}
+    Kikx::Vector{T}
+    gvec::Vector{T}
+    kxy::Vector{T}
+end
+
+ALCWorkspace{T}() where {T} = ALCWorkspace{T}(T[], Matrix{T}(undef, 0, 0), T[], T[], T[], T[])
+
+function _ensure_alc_workspace!(work::ALCWorkspace{T}, n::Int, n_ref::Int) where {T}
+    if length(work.kx) != n
+        resize!(work.kx, n)
+        resize!(work.Kikx, n)
+        resize!(work.gvec, n)
+        resize!(work.k_ref_vec, n)
+    end
+    if n_ref > 1
+        if size(work.k_ref, 1) != n || size(work.k_ref, 2) != n_ref
+            work.k_ref = Matrix{T}(undef, n, n_ref)
+        end
+        if length(work.kxy) != n_ref
+            resize!(work.kxy, n_ref)
+        end
+    elseif length(work.kxy) != 0
+        resize!(work.kxy, 0)
+    end
+    return work
+end
+
 # ============================================================================
 # SIMD-optimized batched kernel computation
 # ============================================================================
@@ -51,6 +83,19 @@ function _apply_kernel_isotropic!(K::Matrix{T}, D_sq::Matrix{T}, d::T) where {T}
         K[idx] = exp(-D_sq[idx] * inv_d)
     end
     return K
+end
+
+@inline function _matvec_small!(y::AbstractVector{T}, A::AbstractMatrix{T},
+                                x::AbstractVector{T}) where {T}
+    n = size(A, 1)
+    @inbounds for i in 1:n
+        acc = zero(T)
+        @turbo for j in 1:n
+            acc += A[i, j] * x[j]
+        end
+        y[i] = acc
+    end
+    return y
 end
 
 # ============================================================================
@@ -157,18 +202,27 @@ function _alc_gp_idx!(alc::AbstractVector{T}, gp::GP{T},
                       Xcand::AbstractMatrix{T},
                       cand_idx::AbstractVector{<:Integer},
                       Xref::AbstractMatrix{T}) where {T}
+    work = ALCWorkspace{T}()
+    return _alc_gp_idx!(alc, gp, Xcand, cand_idx, Xref, work)
+end
+
+function _alc_gp_idx!(alc::AbstractVector{T}, gp::GP{T},
+                      Xcand::AbstractMatrix{T},
+                      cand_idx::AbstractVector{<:Integer},
+                      Xref::AbstractMatrix{T},
+                      work::ALCWorkspace{T}) where {T}
     n = size(gp.X, 1)
     n_ref = size(Xref, 1)
     df = T(n)
 
+    _ensure_alc_workspace!(work, n, n_ref)
+
     # Pre-compute k(X, Xref)
-    k_ref_vec = Vector{T}()
-    k_ref = Matrix{T}(undef, 0, 0)
     if n_ref == 1
-        k_ref_vec = Vector{T}(undef, n)
+        k_ref_vec = work.k_ref_vec
         _compute_kernel_vector_row!(k_ref_vec, gp.X, Xref, 1, gp.d)
     else
-        k_ref = Matrix{T}(undef, n, n_ref)
+        k_ref = work.k_ref
         _compute_kernel_isotropic!(k_ref, gp.X, Xref, gp.d)
     end
 
@@ -176,22 +230,32 @@ function _alc_gp_idx!(alc::AbstractVector{T}, gp::GP{T},
     Ki = Symmetric(gp.Ki)
 
     # Workspace vectors
-    kx = Vector{T}(undef, n)
-    Kikx = Vector{T}(undef, n)
-    gvec = Vector{T}(undef, n)
-    kxy = Vector{T}(undef, n_ref)
+    kx = work.kx
+    Kikx = work.Kikx
+    gvec = work.gvec
+    kxy = work.kxy
 
     df_rat = df / (df - 2)
+    inv_d = one(T) / gp.d
+    m = size(gp.X, 2)
 
     @inbounds for (i, idx) in enumerate(cand_idx)
         # kx = k(X, Xcand[idx,:])
         _compute_kernel_vector_row!(kx, gp.X, Xcand, idx, gp.d)
 
         # Kikx = Ki * kx (in-place)
-        mul!(Kikx, Ki, kx)
+        if n <= 64
+            _matvec_small!(Kikx, gp.Ki, kx)
+        else
+            mul!(Kikx, Ki, kx)
+        end
 
         # mui = 1 + g - kx' * Ki * kx
-        mui = one(T) + gp.g - dot(kx, Kikx)
+        dot_kx = zero(T)
+        @turbo for j in 1:n
+            dot_kx += kx[j] * Kikx[j]
+        end
+        mui = one(T) + gp.g - dot_kx
 
         if mui <= sqrt(eps(T))
             alc[i] = T(-Inf)
@@ -199,19 +263,30 @@ function _alc_gp_idx!(alc::AbstractVector{T}, gp::GP{T},
         end
 
         inv_mui = one(T) / mui
-        @inbounds for j in 1:n
+        @turbo for j in 1:n
             gvec[j] = -Kikx[j] * inv_mui
         end
 
-        # kxy = k(Xcand[idx,:], Xref)
-        _compute_kernel_vector_row!(kxy, Xref, Xcand, idx, gp.d)
-
         if n_ref == 1
-            kg = dot(k_ref_vec, gvec)
-            kxy_val = kxy[1]
+            # kxy scalar
+            dist_sq = zero(T)
+            @turbo for j in 1:m
+                diff = Xref[1, j] - Xcand[idx, j]
+                dist_sq += diff * diff
+            end
+            kxy_val = exp(-dist_sq * inv_d)
+
+            kg = zero(T)
+            k_ref_vec = work.k_ref_vec
+            @turbo for j in 1:n
+                kg += k_ref_vec[j] * gvec[j]
+            end
             ktKikx = kg * kg * mui + 2 * kg * kxy_val + kxy_val * kxy_val * inv_mui
             alc[i] = (gp.phi / df) * df_rat * ktKikx
         else
+            # kxy = k(Xcand[idx,:], Xref)
+            _compute_kernel_vector_row!(kxy, Xref, Xcand, idx, gp.d)
+            k_ref = work.k_ref
             alc_sum = _alc_inner_sum(k_ref, gvec, kxy, mui, inv_mui, gp.phi, df, n, n_ref)
             alc[i] = alc_sum * df_rat / n_ref
         end
@@ -249,6 +324,33 @@ function _mspe_gp_idx!(mspe::AbstractVector{T}, gp::GP{T},
 
     # Reuse mspe buffer to store ALC first
     _alc_gp_idx!(mspe, gp, Xcand, cand_idx, Xref)
+
+    # Predict at reference locations
+    pred_ref = pred_gp(gp, Xref; lite=true)
+    s2avg = mean(pred_ref.s2)
+
+    # Compute MSPE scaling factors
+    dnp = (df + one(T)) / (df - one(T))
+    dnp2 = dnp * (df - 2) / df
+
+    # MSPE = dnp * s2avg - dnp2 * alc
+    @inbounds for i in 1:length(cand_idx)
+        mspe[i] = dnp * s2avg - dnp2 * mspe[i]
+    end
+
+    return mspe
+end
+
+function _mspe_gp_idx!(mspe::AbstractVector{T}, gp::GP{T},
+                       Xcand::AbstractMatrix{T},
+                       cand_idx::AbstractVector{<:Integer},
+                       Xref::AbstractMatrix{T},
+                       work::ALCWorkspace{T}) where {T}
+    n = size(gp.X, 1)
+    df = T(n)
+
+    # Reuse mspe buffer to store ALC first
+    _alc_gp_idx!(mspe, gp, Xcand, cand_idx, Xref, work)
 
     # Predict at reference locations
     pred_ref = pred_gp(gp, Xref; lite=true)

@@ -132,7 +132,7 @@ Higher ALC values indicate points that would reduce prediction uncertainty more.
 MSPE combines current variance with expected variance reduction:
 
 ```math
-\text{MSPE}(x) = \frac{n+1}{n-1} \bar{\sigma}^2 - \frac{n+1}{n(n-1)} \cdot \frac{n-2}{n} \cdot \text{ALC}(x)
+\text{MSPE}(x) = \frac{n+1}{n-1} \bar{\sigma}^2 - \frac{n+1}{n-1} \cdot \frac{n-2}{n} \cdot \text{ALC}(x)
 ```
 
 where ``\bar{\sigma}^2`` is the average predictive variance at reference points.
