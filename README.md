@@ -93,4 +93,4 @@ For full documentation, including tutorials and API reference, see the [document
 
 ## License
 
-MIT License
+LGPL-3.0

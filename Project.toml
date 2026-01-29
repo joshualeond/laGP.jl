@@ -1,7 +1,8 @@
 name = "laGP"
 uuid = "895baa0a-b668-4fc8-b1fe-ed27223c4cb2"
 version = "0.1.0"
-authors = ["Joshua Leon"]
+authors = ["J. Duncan"]
+license = "LGPL-3.0"
 
 [deps]
 AbstractGPs = "99985d1d-32ba-4be9-9821-2ec096f28918"
