@@ -485,104 +485,8 @@ Colorbar(fig_compare[2, 4], hm4, label="Error (lb)")
 save(joinpath(OUTPUT_DIR, "chap1_surrogate_comparison.png"), fig_compare)
 println("Saved: chap1_surrogate_comparison.png")
 
-# Create λ × Wfw surrogate slice (matching R example Figure 1.12)
-println("\nCreating prediction grid for λ × Wfw slice...")
-XX_lw = Matrix{Float64}(undef, n_pred^2, 9)
-
-# Fill with baseline values
-for i in 1:n_pred^2
-    XX_lw[i, :] .= baseline
-end
-
-# Vary l (column 6) and Wfw (column 2)
-let idx = 1
-    for wfw in x_pred
-        for ll in x_pred
-            XX_lw[idx, 6] = ll
-            XX_lw[idx, 2] = wfw
-            idx += 1
-        end
-    end
-end
-
-# Make predictions with both models
-pred_iso_lw = pred_gp(gp_iso, XX_lw; lite=true)
-pred_mean_iso_lw = pred_iso_lw.mean
-
-pred_sep_lw = pred_gp_sep(gp_sep, XX_lw; lite=true)
-pred_mean_sep_lw = pred_sep_lw.mean
-
-# True values for comparison
-true_vals_lw = [wingwt_slice(6, 2, ll, wfw) for ll in x_pred, wfw in x_pred]
-
-# Calculate RMSE for both
-rmse_iso_lw = sqrt(mean((vec(true_vals_lw) .- pred_mean_iso_lw).^2))
-rmse_sep_lw = sqrt(mean((vec(true_vals_lw) .- pred_mean_sep_lw).^2))
-
-println("\nλ × Wfw slice results:")
-println("  Isotropic GP RMSE: $(round(rmse_iso_lw, digits=4)) lb")
-println("  Separable GP RMSE: $(round(rmse_sep_lw, digits=4)) lb")
-println("  Improvement: $(round((rmse_iso_lw - rmse_sep_lw) / rmse_iso_lw * 100, digits=1))%")
-
-# Reshape for plotting
-surrogate_vals_iso_lw = reshape(pred_mean_iso_lw, n_pred, n_pred)
-surrogate_vals_sep_lw = reshape(pred_mean_sep_lw, n_pred, n_pred)
-
-# Plot comparison for λ × Wfw
-fig_compare_lw = Figure(size=(1200, 800))
-
-# Row 1: Surfaces
-ax1_lw = Axis(fig_compare_lw[1, 1], xlabel="λ", ylabel="Wfw",
-              title="True Function", aspect=DataAspect())
-hm1_lw = heatmap!(ax1_lw, collect(x_pred), collect(x_pred), true_vals_lw, colormap=:viridis)
-contour!(ax1_lw, collect(x_pred), collect(x_pred), true_vals_lw, color=:white, linewidth=0.5, levels=10)
-
-ax2_lw = Axis(fig_compare_lw[1, 2], xlabel="λ", ylabel="Wfw",
-              title="Isotropic GP (RMSE=$(round(rmse_iso_lw, digits=3)))", aspect=DataAspect())
-hm2_lw = heatmap!(ax2_lw, collect(x_pred), collect(x_pred), surrogate_vals_iso_lw, colormap=:viridis)
-contour!(ax2_lw, collect(x_pred), collect(x_pred), surrogate_vals_iso_lw, color=:white, linewidth=0.5, levels=10)
-
-ax3_lw = Axis(fig_compare_lw[1, 3], xlabel="λ", ylabel="Wfw",
-              title="Separable GP (RMSE=$(round(rmse_sep_lw, digits=3)))", aspect=DataAspect())
-hm3_lw = heatmap!(ax3_lw, collect(x_pred), collect(x_pred), surrogate_vals_sep_lw, colormap=:viridis)
-contour!(ax3_lw, collect(x_pred), collect(x_pred), surrogate_vals_sep_lw, color=:white, linewidth=0.5, levels=10)
-
-Colorbar(fig_compare_lw[1, 4], hm1_lw, label="Weight (lb)")
-
-# Row 2: Errors
-error_vals_iso_lw = surrogate_vals_iso_lw .- true_vals_lw
-error_vals_sep_lw = surrogate_vals_sep_lw .- true_vals_lw
-max_err_lw = max(maximum(abs.(error_vals_iso_lw)), maximum(abs.(error_vals_sep_lw)))
-
-ax4_lw = Axis(fig_compare_lw[2, 1], xlabel="λ", ylabel="Wfw",
-              title="Isotropic Error", aspect=DataAspect())
-hm4_lw = heatmap!(ax4_lw, collect(x_pred), collect(x_pred), error_vals_iso_lw,
-                  colormap=:RdBu, colorrange=(-max_err_lw, max_err_lw))
-contour!(ax4_lw, collect(x_pred), collect(x_pred), error_vals_iso_lw, color=:black, linewidth=0.5, levels=8)
-
-ax5_lw = Axis(fig_compare_lw[2, 2], xlabel="λ", ylabel="Wfw",
-              title="Separable Error", aspect=DataAspect())
-hm5_lw = heatmap!(ax5_lw, collect(x_pred), collect(x_pred), error_vals_sep_lw,
-                  colormap=:RdBu, colorrange=(-max_err_lw, max_err_lw))
-contour!(ax5_lw, collect(x_pred), collect(x_pred), error_vals_sep_lw, color=:black, linewidth=0.5, levels=8)
-
-# Error histogram comparison
-ax6_lw = Axis(fig_compare_lw[2, 3], xlabel="Error (lb)", ylabel="Count",
-              title="Error Distribution")
-hist!(ax6_lw, vec(error_vals_iso_lw), bins=50, color=(:blue, 0.5), label="Isotropic")
-hist!(ax6_lw, vec(error_vals_sep_lw), bins=50, color=(:red, 0.5), label="Separable")
-axislegend(ax6_lw, position=:rt)
-
-Colorbar(fig_compare_lw[2, 4], hm4_lw, label="Error (lb)")
-
-save(joinpath(OUTPUT_DIR, "chap1_surrogate_comparison_l_Wfw.png"), fig_compare_lw)
-println("Saved: chap1_surrogate_comparison_l_Wfw.png")
-
-# Store separable RMSE for summary (keeping variable names for backward compat)
+# Store separable RMSE for summary
 rmse = rmse_sep
-rmse_lw = rmse_sep_lw
-pred_mean = pred_mean_sep
-pred_mean_lw = pred_mean_sep_lw
 
 # ============================================================================
 # PART 6: Main Effects Analysis (using Separable GP)
@@ -674,15 +578,13 @@ println("  - chap1_wingwt_A_Nz.png: Wing weight A×Nz slice (true function)")
 println("  - chap1_wingwt_l_Wfw.png: Wing weight λ×Wfw slice (true function)")
 println("  - chap1_lhs_design.png: Latin Hypercube design projection")
 println("  - chap1_surrogate_comparison.png: Isotropic vs Separable GP (A×Nz slice)")
-println("  - chap1_surrogate_comparison_l_Wfw.png: Isotropic vs Separable GP (λ×Wfw slice)")
 println("  - chap1_main_effects.png: Main effects with confidence bands (Separable GP)")
 
 println("\nKey findings:")
 println("  - Most influential inputs: Sw (wing area), A (aspect ratio), Nz (load factor)")
 println("  - Least influential inputs: l (taper ratio), Wfw (fuel weight)")
-println("  - Isotropic GP vs Separable GP comparison:")
-println("      A×Nz slice:  Isotropic RMSE = $(round(rmse_iso, digits=4)) lb, Separable RMSE = $(round(rmse_sep, digits=4)) lb")
-println("      λ×Wfw slice: Isotropic RMSE = $(round(rmse_iso_lw, digits=4)) lb, Separable RMSE = $(round(rmse_sep_lw, digits=4)) lb")
+println("  - Isotropic GP vs Separable GP comparison (A×Nz slice):")
+println("      Isotropic RMSE = $(round(rmse_iso, digits=4)) lb, Separable RMSE = $(round(rmse_sep, digits=4)) lb")
 println("  - For this smooth function, MLE may converge to similar lengthscales")
 println("    for all dimensions, making separable GP behave like isotropic GP.")
 println("  - Separable GP benefits are more pronounced for functions with true")

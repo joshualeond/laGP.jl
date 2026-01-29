@@ -174,8 +174,6 @@ Isotropic vs Separable GP comparison on the A×Nz slice:
 
 ![Surrogate Comparison (A×Nz)](../assets/chap1_surrogate_comparison.png)
 
-![Surrogate Comparison (λ×Wfw)](../assets/chap1_surrogate_comparison_l_Wfw.png)
-
 ## Main Effects Analysis
 
 Compute sensitivity of each input while holding others at baseline:
