@@ -372,31 +372,81 @@ end
 # ============================================================================
 
 """
-    mle_gp_sep!(gp, param, dim; tmax, tmin=sqrt(eps(T)))
+    mle_gp_sep!(gp, param, dim; tmax, tmin=sqrt(eps(T)), maxit=100, verb=0, dab=(3/2, nothing))
 
-Optimize a single hyperparameter of a separable GP via maximum likelihood.
+Optimize separable GP hyperparameters via maximum likelihood.
+
+- If `param == :d` and `dim` is provided, optimizes a *single* lengthscale (1D grid + Brent).
+- If `param == :d` and `dim` is `nothing`, optimizes *all* lengthscales jointly (L-BFGS-B).
+- If `param == :g`, optimizes the nugget (1D grid + Brent).
 
 # Arguments
 - `gp::GPsep`: Separable Gaussian Process model (modified in-place)
 - `param::Symbol`: parameter to optimize (:d or :g)
-- `dim::Int`: dimension index for :d (ignored for :g)
-- `tmax::Real`: maximum value for parameter (required)
-- `tmin::Real`: minimum value for parameter (default: sqrt(eps(T)), matching R's behavior)
+- `dim::Union{Int,Nothing}`: dimension index for :d (ignored for :g). If `nothing`, optimizes all d.
+- `tmax`: maximum value(s) for parameter(s). Scalar or vector for `:d`.
+- `tmin`: minimum value(s) for parameter(s). Scalar or vector for `:d`.
+- `maxit::Int`: maximum iterations for joint L-BFGS-B (when `dim` is `nothing`)
+- `verb::Int`: verbosity for joint L-BFGS-B
+- `dab`: prior tuple for `d` (pass `nothing` to disable prior)
 
 # Returns
 - `NamedTuple`: (d=..., g=..., its=..., msg=...) optimization result
 """
-function mle_gp_sep!(gp::GPsep{T}, param::Symbol, dim::Int=1;
-                     tmax::Real, tmin::Real=sqrt(eps(T))) where {T}
+function mle_gp_sep!(gp::GPsep{T}, param::Symbol, dim::Union{Int,Nothing}=nothing;
+                     tmax, tmin=sqrt(eps(T)), maxit::Int=100, verb::Int=0,
+                     dab::Union{Nothing,Tuple{Real,Union{Real,Nothing}}}=(3/2, nothing)) where {T}
     @assert param in (:d, :g) "param must be :d or :g"
-    @assert tmin < tmax "tmin must be less than tmax"
 
+    # Joint optimization over all lengthscales (R-style mleGPsep)
+    if param == :d && isnothing(dim)
+        m = length(gp.d)
+
+        # Expand bounds to per-dimension vectors (R-compatible behavior)
+        function _expand_bounds(val)
+            if val isa AbstractVector || val isa Tuple
+                v = collect(val)
+                if length(v) == m
+                    return v
+                elseif length(v) == 1
+                    return fill(v[1], m)
+                elseif length(v) == 2 && m != 2
+                    return fill(v[1], m)
+                else
+                    error("length(tmin/tmax) should be 1 or $m (or 2 when m==2)")
+                end
+            else
+                return fill(val, m)
+            end
+        end
+
+        tmin_vec = _expand_bounds(tmin)
+        tmax_vec = _expand_bounds(tmax)
+        @assert all(tmin_vec .< tmax_vec) "tmin must be less than tmax for all dimensions"
+
+        d_ranges = [(tmin_vec[i], tmax_vec[i]) for i in 1:m]
+        result = mle_gp_sep_d!(gp; drange=d_ranges, maxit=maxit, verb=verb, dab=dab)
+        return (d=copy(gp.d), g=gp.g, its=result.tot_its, msg=result.msg)
+    end
+
+    # Single-parameter optimization (1D)
     if param == :d
+        @assert dim isa Int "dim must be an Int when optimizing a single lengthscale"
         @assert 1 <= dim <= length(gp.d) "dim must be between 1 and $(length(gp.d))"
     end
 
-    tmin_T = T(tmin)
-    tmax_T = T(tmax)
+    # Allow scalar or vector bounds for single-parameter case
+    if param == :g
+        tmin_val = (tmin isa AbstractVector || tmin isa Tuple) ? tmin[end] : tmin
+        tmax_val = (tmax isa AbstractVector || tmax isa Tuple) ? tmax[end] : tmax
+    else
+        tmin_val = (tmin isa AbstractVector || tmin isa Tuple) ? tmin[dim] : tmin
+        tmax_val = (tmax isa AbstractVector || tmax isa Tuple) ? tmax[dim] : tmax
+    end
+    @assert tmin_val < tmax_val "tmin must be less than tmax"
+
+    tmin_T = T(tmin_val)
+    tmax_T = T(tmax_val)
 
     # Objective function: negative log-likelihood
     function neg_llik(x)
@@ -469,7 +519,7 @@ This mirrors laGP's `mleGPsep` behavior, but without updating g.
 """
 function mle_gp_sep_d!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple{Real,Real}}},
                        maxit::Int=100, verb::Int=0,
-                       dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
+                       dab::Union{Nothing,Tuple{Real,Union{Real,Nothing}}}=(3/2, nothing)) where {T}
     m = length(gp.d)
 
     # Convert drange to per-dimension ranges
@@ -480,12 +530,17 @@ function mle_gp_sep_d!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tup
         d_ranges = drange
     end
 
-    # Compute prior parameters
-    d_shape = T(dab[1])
-    d_scales = if dab[2] === nothing
-        [compute_prior_scale(T(sqrt(r[1] * r[2])), d_shape) for r in d_ranges]
+    # Compute prior parameters (allow disabling priors with dab=nothing or dab[1]<=0)
+    has_prior = dab !== nothing && dab[1] > 0
+    d_shape = has_prior ? T(dab[1]) : zero(T)
+    d_scales = if has_prior
+        if dab[2] === nothing
+            [compute_prior_scale(T(sqrt(r[1] * r[2])), d_shape) for r in d_ranges]
+        else
+            fill(T(dab[2]), m)
+        end
     else
-        fill(T(dab[2]), m)
+        zeros(T, m)
     end
 
     # Parameter vector: [d[1], ..., d[m]] in LOG SPACE
@@ -501,15 +556,19 @@ function mle_gp_sep_d!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tup
         if G !== nothing
             grad = dllik_gp_sep(gp; dg=false, dd=true)
             G[1:m] .= -grad.dlld .* d_new
-            for k in 1:m
-                G[k] += -dlog_invgamma(d_new[k], d_shape, d_scales[k]) * d_new[k]
+            if has_prior
+                for k in 1:m
+                    G[k] += -dlog_invgamma(d_new[k], d_shape, d_scales[k]) * d_new[k]
+                end
             end
         end
 
         if F !== nothing
             nll = -llik_gp_sep(gp)
-            for k in 1:m
-                nll += -log_invgamma(d_new[k], d_shape, d_scales[k])
+            if has_prior
+                for k in 1:m
+                    nll += -log_invgamma(d_new[k], d_shape, d_scales[k])
+                end
             end
             return nll
         end
@@ -546,8 +605,8 @@ Joint MLE optimization of lengthscales and nugget for GPsep.
 """
 function jmle_gp_sep!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple{Real,Real}}},
                       grange::Tuple{Real,Real}, maxit::Int=100, verb::Int=0,
-                      dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
-                      gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
+                      dab::Union{Nothing,Tuple{Real,Union{Real,Nothing}}}=(3/2, nothing),
+                      gab::Union{Nothing,Tuple{Real,Union{Real,Nothing}}}=(3/2, nothing)) where {T}
     m = length(gp.d)
 
     # Convert drange to per-dimension ranges
@@ -558,19 +617,29 @@ function jmle_gp_sep!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tupl
         d_ranges = drange
     end
 
-    # Compute prior parameters
-    d_shape = T(dab[1])
-    d_scales = if dab[2] === nothing
-        [compute_prior_scale(T(sqrt(r[1] * r[2])), d_shape) for r in d_ranges]
+    # Compute prior parameters (allow disabling priors with dab/gab=nothing or shape<=0)
+    has_d_prior = dab !== nothing && dab[1] > 0
+    d_shape = has_d_prior ? T(dab[1]) : zero(T)
+    d_scales = if has_d_prior
+        if dab[2] === nothing
+            [compute_prior_scale(T(sqrt(r[1] * r[2])), d_shape) for r in d_ranges]
+        else
+            fill(T(dab[2]), m)
+        end
     else
-        fill(T(dab[2]), m)
+        zeros(T, m)
     end
 
-    g_shape = T(gab[1])
-    g_scale = if gab[2] === nothing
-        compute_prior_scale(T(sqrt(grange[1] * grange[2])), g_shape)
+    has_g_prior = gab !== nothing && gab[1] > 0
+    g_shape = has_g_prior ? T(gab[1]) : zero(T)
+    g_scale = if has_g_prior
+        if gab[2] === nothing
+            compute_prior_scale(T(sqrt(grange[1] * grange[2])), g_shape)
+        else
+            T(gab[2])
+        end
     else
-        T(gab[2])
+        zero(T)
     end
 
     # Parameter vector: [d[1], ..., d[m], g] in LOG SPACE
@@ -596,18 +665,26 @@ function jmle_gp_sep!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tupl
             G[m+1] = -grad.dllg * g_new
 
             # Add prior gradients
-            for k in 1:m
-                G[k] += -dlog_invgamma(d_new[k], d_shape, d_scales[k]) * d_new[k]
+            if has_d_prior
+                for k in 1:m
+                    G[k] += -dlog_invgamma(d_new[k], d_shape, d_scales[k]) * d_new[k]
+                end
             end
-            G[m+1] += -dlog_invgamma(g_new, g_shape, g_scale) * g_new
+            if has_g_prior
+                G[m+1] += -dlog_invgamma(g_new, g_shape, g_scale) * g_new
+            end
         end
 
         if F !== nothing
             nll = -llik_gp_sep(gp)
-            for k in 1:m
-                nll += -log_invgamma(d_new[k], d_shape, d_scales[k])
+            if has_d_prior
+                for k in 1:m
+                    nll += -log_invgamma(d_new[k], d_shape, d_scales[k])
+                end
             end
-            nll += -log_invgamma(g_new, g_shape, g_scale)
+            if has_g_prior
+                nll += -log_invgamma(g_new, g_shape, g_scale)
+            end
             return nll
         end
     end
@@ -1052,7 +1129,7 @@ function _lbfgs_d_only(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tup
     end
 
     # Compute prior parameters
-    has_prior = dab !== nothing && dab[1] !== nothing
+    has_prior = dab !== nothing && dab[1] !== nothing && dab[1] > 0
     d_shape = has_prior ? T(dab[1]) : zero(T)
     d_scales = if has_prior && dab[2] !== nothing
         fill(T(dab[2]), m)
@@ -1199,8 +1276,8 @@ This matches R's laGP algorithm.
 """
 function amle_gp_sep!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tuple{Real,Real}}},
                       grange::Tuple{Real,Real}, maxit::Int=100, verb::Int=0,
-                      dab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing),
-                      gab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
+                      dab::Union{Nothing,Tuple{Real,Union{Real,Nothing}}}=(3/2, nothing),
+                      gab::Union{Nothing,Tuple{Real,Union{Real,Nothing}}}=(3/2, nothing)) where {T}
     m = length(gp.d)
     tol = sqrt(eps(T))
 
@@ -1212,14 +1289,19 @@ function amle_gp_sep!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tupl
         d_ranges = drange
     end
 
-    # Compute prior parameters for g
-    g_shape = T(gab[1])
-    g_scale = if gab[2] === nothing
-        compute_prior_scale(T(sqrt(grange[1] * grange[2])), g_shape)
+    # Compute prior parameters for g (allow disabling priors with gab=nothing or shape<=0)
+    has_g_prior = gab !== nothing && gab[1] > 0
+    g_ab = if has_g_prior
+        g_shape = T(gab[1])
+        g_scale = if gab[2] === nothing
+            compute_prior_scale(T(sqrt(grange[1] * grange[2])), g_shape)
+        else
+            T(gab[2])
+        end
+        (g_shape, g_scale)
     else
-        T(gab[2])
+        nothing
     end
-    g_ab = (g_shape, g_scale)
 
     dits = 0
     gits = 0

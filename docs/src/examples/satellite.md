@@ -114,16 +114,16 @@ rmspe_values = Dict{Symbol, Float64}()
 for species in species_list
     X_train, X_test, Y_train, Y_test = normalized[species]
 
-    # Get hyperparameter ranges
-    d_range = darg_sep(X_train)
-    g_range = garg(Y_train)
+    # Match R example: fixed starting d=2 and g=1e-6
+    m = size(X_train, 2)
+    d_start = fill(2.0, m)
+    g_fixed = 1e-6
 
-    d_start = [r.start for r in d_range.ranges]
-    d_ranges = [(r.min, r.max) for r in d_range.ranges]
-
-    # Fit GP
-    gp = new_gp_sep(X_train, Y_train, d_start, g_range.start)
-    jmle_gp_sep!(gp; drange=d_ranges, grange=(g_range.min, g_range.max))
+    # Fit GP (optimize lengthscales only; keep nugget fixed)
+    gp = new_gp_sep(X_train, Y_train, d_start, g_fixed)
+    tmin = sqrt(eps(eltype(X_train)))
+    tmax = m^2
+    mle_gp_sep!(gp, :d; tmin=tmin, tmax=tmax, maxit=200, dab=nothing)
 
     # Predict
     pred = pred_gp_sep(gp, X_test; lite=true)

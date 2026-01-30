@@ -208,25 +208,24 @@ for species in SPECIES
     X = normalized_data[species].X_train
     Y = normalized_data[species].Y_train
 
-    # Get hyperparameter ranges
-    d_range_sep = darg_sep(X)
-    g_range = garg(Y)
+    # Match R example: fixed starting d=2 and g=1e-6
+    m = size(X, 2)
+    d_start = fill(2.0, m)
+    g_fixed = 1e-6
 
-    println("  Nugget range: min=$(round(g_range.min, sigdigits=3)), max=$(round(g_range.max, sigdigits=3))")
-
-    # Initial lengthscales from darg_sep
-    d_start = [r.start for r in d_range_sep.ranges]
-    d_ranges = [(r.min, r.max) for r in d_range_sep.ranges]
+    println("  Fixed nugget g: $(g_fixed)")
 
     # Create and fit GP
-    gp = new_gp_sep(X, Y, d_start, g_range.start)
+    gp = new_gp_sep(X, Y, d_start, g_fixed)
     println("  Initial log-likelihood: $(round(llik_gp_sep(gp), digits=2))")
 
-    # MLE optimization
-    result = jmle_gp_sep!(gp; drange=d_ranges, grange=(g_range.min, g_range.max))
+    # MLE optimization (lengthscales only; keep nugget fixed)
+    tmin = sqrt(eps(eltype(X)))
+    tmax = m^2
+    result = mle_gp_sep!(gp, :d; tmin=tmin, tmax=tmax, maxit=200, dab=nothing)
 
     println("  After MLE: $(result.msg)")
-    println("  Nugget g: $(round(gp.g, sigdigits=4))")
+    println("  Fixed nugget g: $(round(gp.g, sigdigits=4))")
     println("  Final log-likelihood: $(round(llik_gp_sep(gp), digits=2))")
 
     # Store results
