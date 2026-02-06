@@ -91,17 +91,6 @@ function compute_prior_scale(median_val::T, shape::T) where {T}
     return median_val * (shape + T(1/3))
 end
 
-"""
-    compute_prior_scale_from_start(start_val, shape)
-
-Compute prior scale parameter using the starting value from darg/garg.
-This makes the prior centered on the data-adaptive starting value.
-"""
-function compute_prior_scale_from_start(start_val::T, shape::T) where {T}
-    # Set scale so that the mode of IG is at start_val
-    # Mode = scale / (shape + 1), so scale = start_val * (shape + 1)
-    return start_val * (shape + one(T))
-end
 
 """
     _quantile_type7(x_sorted, p)
@@ -941,6 +930,87 @@ function d2log_invgamma(x::T, shape::T, scale::T) where {T}
 end
 
 """
+    _newton_gp_param(gp; pmin, pmax, th0, ab, maxit, tol, get_derivatives, update_fn!, brent_fallback, get_val)
+
+Generic Newton's method for 1D GP parameter optimization.
+
+Runs Newton iterations with damped steps, bounded to [pmin, pmax].
+Falls back to Brent's method if the Hessian indicates non-concavity
+or the step cannot stay within bounds.
+
+# Arguments
+- `gp::AnyGP`: GP model (modified in-place via `update_fn!`)
+- `pmin::T`, `pmax::T`: parameter bounds
+- `th0::T`: initial parameter value
+- `ab::Union{Nothing,Tuple}`: (shape, scale) for Inverse-Gamma prior
+- `maxit::Int`: maximum Newton iterations
+- `tol::T`: relative convergence tolerance
+- `get_derivatives`: `() -> (dllik::T, d2llik::T)` returns first and second derivatives
+- `update_fn!`: `tnew -> ()` updates gp with new parameter value
+- `brent_fallback`: `() -> NamedTuple` Brent fallback when Newton fails
+- `get_val`: `() -> T` returns current parameter value
+"""
+function _newton_gp_param(gp::AnyGP{T};
+        pmin::T, pmax::T, th0::T,
+        ab::Union{Nothing,Tuple{Real,Real}},
+        maxit::Int, tol::T,
+        get_derivatives,
+        update_fn!,
+        brent_fallback,
+        get_val
+    ) where {T}
+    th = th0
+    its = 0
+
+    # Prior parameters
+    has_prior = ab !== nothing
+    p_shape = has_prior ? T(ab[1]) : zero(T)
+    p_scale = has_prior ? T(ab[2]) : zero(T)
+
+    for i in 1:maxit
+        dllik, d2llik = get_derivatives()
+
+        # Add prior contributions
+        if has_prior
+            dllik += dlog_invgamma(th, p_shape, p_scale)
+            d2llik += d2log_invgamma(th, p_shape, p_scale)
+        end
+
+        its += 1
+        rat = dllik / d2llik
+
+        # Check direction: for maximization, need d2llik < 0 (concave)
+        if d2llik >= 0
+            return brent_fallback()
+        end
+
+        # Newton step with bounds checking
+        tnew = th - rat
+        adj = one(T)
+        while (tnew <= pmin || tnew >= pmax) && adj > tol
+            adj /= 2
+            tnew = th - adj * rat
+        end
+
+        if tnew <= pmin || tnew >= pmax
+            return brent_fallback()
+        end
+
+        # Update GP
+        update_fn!(tnew)
+
+        # Check convergence based on relative parameter change
+        rel_change = abs(tnew - th) / max(abs(th), one(T))
+        if rel_change < tol
+            break
+        end
+        th = tnew
+    end
+
+    return (val=get_val(), its=its, method=:newton)
+end
+
+"""
     newton_gp_d(gp; drange, ab=nothing, maxit=100, tol=sqrt(eps(T)))
 
 Newton's method for optimizing lengthscale d in isotropic GP.
@@ -959,63 +1029,17 @@ Falls back to Brent if Newton fails (wrong direction or bounds issues).
 function newton_gp_d(gp::GP{T}; drange::Tuple{Real,Real},
                       ab::Union{Nothing,Tuple{Real,Real}}=nothing,
                       maxit::Int=100, tol::T=sqrt(eps(T))) where {T}
-    dmin, dmax = T(drange[1]), T(drange[2])
-    th = gp.d
-    its = 0
-
-    # Prior parameters
-    has_prior = ab !== nothing
-    d_shape = has_prior ? T(ab[1]) : zero(T)
-    d_scale = has_prior ? T(ab[2]) : zero(T)
-
-    for i in 1:maxit
-        # Get first and second derivatives
-        grad = dllik_gp(gp; dg=false, dd=true)
-        d2 = d2llik_gp(gp; d2g=false, d2d=true)
-
-        dllik = grad.dlld
-        d2llik = d2.d2lld
-
-        # Add prior contributions
-        if has_prior
-            dllik += dlog_invgamma(th, d_shape, d_scale)
-            d2llik += d2log_invgamma(th, d_shape, d_scale)
-        end
-
-        its += 1
-        rat = dllik / d2llik
-
-        # Check direction: for maximization, need d2llik < 0 (concave)
-        # At a maximum, dllik=0 and d2llik<0
-        # If d2llik > 0 (convex), we're at a minimum or saddle point
-        if d2llik >= 0
-            return _brent_gp_d(gp; drange=drange, ab=ab)
-        end
-
-        # Newton step with bounds checking
-        tnew = th - rat
-        adj = one(T)
-        while (tnew <= dmin || tnew >= dmax) && adj > tol
-            adj /= 2
-            tnew = th - adj * rat
-        end
-
-        if tnew <= dmin || tnew >= dmax
-            return _brent_gp_d(gp; drange=drange, ab=ab)
-        end
-
-        # Update GP
-        update_gp!(gp; d=tnew)
-
-        # Check convergence based on relative parameter change
-        rel_change = abs(tnew - th) / max(abs(th), one(T))
-        if rel_change < tol
-            break
-        end
-        th = tnew
-    end
-
-    return (val=gp.d, its=its, method=:newton)
+    return _newton_gp_param(gp;
+        pmin=T(drange[1]), pmax=T(drange[2]), th0=gp.d,
+        ab=ab, maxit=maxit, tol=tol,
+        get_derivatives = () -> begin
+            grad = dllik_gp(gp; dg=false, dd=true)
+            d2 = d2llik_gp(gp; d2g=false, d2d=true)
+            (grad.dlld, d2.d2lld)
+        end,
+        update_fn! = tnew -> update_gp!(gp; d=tnew),
+        brent_fallback = () -> _brent_gp_d(gp; drange=drange, ab=ab),
+        get_val = () -> gp.d)
 end
 
 """
@@ -1037,61 +1061,17 @@ Falls back to Brent if Newton fails.
 function newton_gp_g(gp::GP{T}; grange::Tuple{Real,Real},
                       ab::Union{Nothing,Tuple{Real,Real}}=nothing,
                       maxit::Int=100, tol::T=sqrt(eps(T))) where {T}
-    gmin, gmax = T(grange[1]), T(grange[2])
-    th = gp.g
-    its = 0
-
-    # Prior parameters
-    has_prior = ab !== nothing
-    g_shape = has_prior ? T(ab[1]) : zero(T)
-    g_scale = has_prior ? T(ab[2]) : zero(T)
-
-    for i in 1:maxit
-        # Get first and second derivatives
-        grad = dllik_gp(gp; dg=true, dd=false)
-        d2 = d2llik_gp(gp; d2g=true, d2d=false)
-
-        dllik = grad.dllg
-        d2llik = d2.d2llg
-
-        # Add prior contributions
-        if has_prior
-            dllik += dlog_invgamma(th, g_shape, g_scale)
-            d2llik += d2log_invgamma(th, g_shape, g_scale)
-        end
-
-        its += 1
-        rat = dllik / d2llik
-
-        # Check direction: for maximization, need d2llik < 0 (concave)
-        if d2llik >= 0
-            return _brent_gp_g(gp; grange=grange, ab=ab)
-        end
-
-        # Newton step with bounds checking
-        tnew = th - rat
-        adj = one(T)
-        while (tnew <= gmin || tnew >= gmax) && adj > tol
-            adj /= 2
-            tnew = th - adj * rat
-        end
-
-        if tnew <= gmin || tnew >= gmax
-            return _brent_gp_g(gp; grange=grange, ab=ab)
-        end
-
-        # Update GP
-        update_gp!(gp; g=tnew)
-
-        # Check convergence based on relative parameter change
-        rel_change = abs(tnew - th) / max(abs(th), one(T))
-        if rel_change < tol
-            break
-        end
-        th = tnew
-    end
-
-    return (val=gp.g, its=its, method=:newton)
+    return _newton_gp_param(gp;
+        pmin=T(grange[1]), pmax=T(grange[2]), th0=gp.g,
+        ab=ab, maxit=maxit, tol=tol,
+        get_derivatives = () -> begin
+            grad = dllik_gp(gp; dg=true, dd=false)
+            d2 = d2llik_gp(gp; d2g=true, d2d=false)
+            (grad.dllg, d2.d2llg)
+        end,
+        update_fn! = tnew -> update_gp!(gp; g=tnew),
+        brent_fallback = () -> _brent_gp_g(gp; grange=grange, ab=ab),
+        get_val = () -> gp.g)
 end
 
 """
@@ -1113,65 +1093,63 @@ Falls back to Brent if Newton fails.
 function newton_gp_sep_g(gp::GPsep{T}; grange::Tuple{Real,Real},
                           ab::Union{Nothing,Tuple{Real,Real}}=nothing,
                           maxit::Int=100, tol::T=sqrt(eps(T))) where {T}
-    gmin, gmax = T(grange[1]), T(grange[2])
-    th = gp.g
-    its = 0
-
-    # Prior parameters
-    has_prior = ab !== nothing
-    g_shape = has_prior ? T(ab[1]) : zero(T)
-    g_scale = has_prior ? T(ab[2]) : zero(T)
-
-    for i in 1:maxit
-        # Get first and second derivatives
-        grad = dllik_gp_sep(gp; dg=true, dd=false)
-        d2llik = d2llik_gp_sep_nug(gp)
-
-        dllik = grad.dllg
-
-        # Add prior contributions
-        if has_prior
-            dllik += dlog_invgamma(th, g_shape, g_scale)
-            d2llik += d2log_invgamma(th, g_shape, g_scale)
-        end
-
-        its += 1
-        rat = dllik / d2llik
-
-        # Check direction: for maximization, need d2llik < 0 (concave)
-        if d2llik >= 0
-            return _brent_gp_sep_g(gp; grange=grange, ab=ab)
-        end
-
-        # Newton step with bounds checking
-        tnew = th - rat
-        adj = one(T)
-        while (tnew <= gmin || tnew >= gmax) && adj > tol
-            adj /= 2
-            tnew = th - adj * rat
-        end
-
-        if tnew <= gmin || tnew >= gmax
-            return _brent_gp_sep_g(gp; grange=grange, ab=ab)
-        end
-
-        # Update GP
-        update_gp_sep!(gp; g=tnew)
-
-        # Check convergence based on relative parameter change
-        rel_change = abs(tnew - th) / max(abs(th), one(T))
-        if rel_change < tol
-            break
-        end
-        th = tnew
-    end
-
-    return (val=gp.g, its=its, method=:newton)
+    return _newton_gp_param(gp;
+        pmin=T(grange[1]), pmax=T(grange[2]), th0=gp.g,
+        ab=ab, maxit=maxit, tol=tol,
+        get_derivatives = () -> begin
+            grad = dllik_gp_sep(gp; dg=true, dd=false)
+            d2llik = d2llik_gp_sep_nug(gp)
+            (grad.dllg, d2llik)
+        end,
+        update_fn! = tnew -> update_gp_sep!(gp; g=tnew),
+        brent_fallback = () -> _brent_gp_sep_g(gp; grange=grange, ab=ab),
+        get_val = () -> gp.g)
 end
 
 # ============================================================================
 # Brent Fallback Functions
 # ============================================================================
+
+"""
+    _brent_gp_param(gp; range, ab, update_fn!, llik_fn, get_val)
+
+Generic Brent's method fallback for 1D GP parameter optimization.
+
+# Arguments
+- `gp::AnyGP`: GP model (modified in-place via `update_fn!`)
+- `range::Tuple`: (min, max) range for the parameter
+- `ab::Union{Nothing,Tuple}`: (shape, scale) for Inverse-Gamma prior
+- `update_fn!`: `x -> ()` updates gp with new parameter value
+- `llik_fn`: `() -> T` returns current log-likelihood
+- `get_val`: `() -> T` returns current parameter value
+"""
+function _brent_gp_param(gp::AnyGP{T};
+        range::Tuple{Real,Real},
+        ab::Union{Nothing,Tuple{Real,Real}},
+        update_fn!,
+        llik_fn,
+        get_val
+    ) where {T}
+    pmin, pmax = T(range[1]), T(range[2])
+
+    has_prior = ab !== nothing
+    p_shape = has_prior ? T(ab[1]) : zero(T)
+    p_scale = has_prior ? T(ab[2]) : zero(T)
+
+    function neg_posterior(x)
+        update_fn!(x)
+        nll = -llik_fn()
+        if has_prior
+            nll += -log_invgamma(x, p_shape, p_scale)
+        end
+        return nll
+    end
+
+    result = optimize(neg_posterior, pmin, pmax, Brent())
+    update_fn!(Optim.minimizer(result))
+
+    return (val=get_val(), its=result.iterations, method=:brent)
+end
 
 """
     _brent_gp_d(gp; drange, ab=nothing)
@@ -1180,26 +1158,10 @@ Brent's method fallback for d optimization in isotropic GP.
 """
 function _brent_gp_d(gp::GP{T}; drange::Tuple{Real,Real},
                       ab::Union{Nothing,Tuple{Real,Real}}=nothing) where {T}
-    dmin, dmax = T(drange[1]), T(drange[2])
-
-    has_prior = ab !== nothing
-    d_shape = has_prior ? T(ab[1]) : zero(T)
-    d_scale = has_prior ? T(ab[2]) : zero(T)
-
-    function neg_posterior(x)
-        update_gp!(gp; d=x)
-        nll = -llik_gp(gp)
-        if has_prior
-            nll += -log_invgamma(x, d_shape, d_scale)
-        end
-        return nll
-    end
-
-    result = optimize(neg_posterior, dmin, dmax, Brent())
-    opt_val = Optim.minimizer(result)
-    update_gp!(gp; d=opt_val)
-
-    return (val=gp.d, its=result.iterations, method=:brent)
+    return _brent_gp_param(gp; range=drange, ab=ab,
+        update_fn! = x -> update_gp!(gp; d=x),
+        llik_fn = () -> llik_gp(gp),
+        get_val = () -> gp.d)
 end
 
 """
@@ -1209,26 +1171,10 @@ Brent's method fallback for g optimization in isotropic GP.
 """
 function _brent_gp_g(gp::GP{T}; grange::Tuple{Real,Real},
                       ab::Union{Nothing,Tuple{Real,Real}}=nothing) where {T}
-    gmin, gmax = T(grange[1]), T(grange[2])
-
-    has_prior = ab !== nothing
-    g_shape = has_prior ? T(ab[1]) : zero(T)
-    g_scale = has_prior ? T(ab[2]) : zero(T)
-
-    function neg_posterior(x)
-        update_gp!(gp; g=x)
-        nll = -llik_gp(gp)
-        if has_prior
-            nll += -log_invgamma(x, g_shape, g_scale)
-        end
-        return nll
-    end
-
-    result = optimize(neg_posterior, gmin, gmax, Brent())
-    opt_val = Optim.minimizer(result)
-    update_gp!(gp; g=opt_val)
-
-    return (val=gp.g, its=result.iterations, method=:brent)
+    return _brent_gp_param(gp; range=grange, ab=ab,
+        update_fn! = x -> update_gp!(gp; g=x),
+        llik_fn = () -> llik_gp(gp),
+        get_val = () -> gp.g)
 end
 
 """
@@ -1238,26 +1184,10 @@ Brent's method fallback for g optimization in separable GP.
 """
 function _brent_gp_sep_g(gp::GPsep{T}; grange::Tuple{Real,Real},
                           ab::Union{Nothing,Tuple{Real,Real}}=nothing) where {T}
-    gmin, gmax = T(grange[1]), T(grange[2])
-
-    has_prior = ab !== nothing
-    g_shape = has_prior ? T(ab[1]) : zero(T)
-    g_scale = has_prior ? T(ab[2]) : zero(T)
-
-    function neg_posterior(x)
-        update_gp_sep!(gp; g=x)
-        nll = -llik_gp_sep(gp)
-        if has_prior
-            nll += -log_invgamma(x, g_shape, g_scale)
-        end
-        return nll
-    end
-
-    result = optimize(neg_posterior, gmin, gmax, Brent())
-    opt_val = Optim.minimizer(result)
-    update_gp_sep!(gp; g=opt_val)
-
-    return (val=gp.g, its=result.iterations, method=:brent)
+    return _brent_gp_param(gp; range=grange, ab=ab,
+        update_fn! = x -> update_gp_sep!(gp; g=x),
+        llik_fn = () -> llik_gp_sep(gp),
+        get_val = () -> gp.g)
 end
 
 # ============================================================================

@@ -1,7 +1,6 @@
 # Core GP functions
 
-using AbstractGPs: GP as AbstractGP, posterior, mean, var
-using KernelFunctions: SqExponentialKernel, with_lengthscale, ARDTransform, kernelmatrix!, kernelmatrix, RowVecs
+using KernelFunctions: SqExponentialKernel, with_lengthscale, ARDTransform, kernelmatrix, RowVecs
 using LoopVectorization: @turbo
 
 # ============================================================================
@@ -183,6 +182,25 @@ function _compute_logdet_chol(chol::Cholesky{T}) where {T}
 end
 
 """
+    _compute_gp_cache(K, Z)
+
+Compute and return the shared GP cache quantities from a covariance matrix K and response Z.
+
+Returns a NamedTuple with: chol, Ki, KiZ, phi, ldetK, tr_Ki.
+
+Used by `new_gp`, `new_gp_sep`, `update_gp!`, `update_gp_sep!` to avoid code duplication.
+"""
+function _compute_gp_cache(K::AbstractMatrix{T}, Z::Vector{T}) where {T}
+    chol = cholesky(Symmetric(K))
+    Ki = inv(chol)
+    KiZ = chol \ Z
+    phi = dot(Z, KiZ)
+    ldetK = _compute_logdet_chol(chol)
+    tr_Ki = tr(Ki)
+    return (; chol, Ki, KiZ, phi, ldetK, tr_Ki)
+end
+
+"""
     _compute_lite_variance(k, Kik, phi, n, g)
 
 Compute diagonal (lite) variance for GP predictions.
@@ -241,25 +259,9 @@ function new_gp(X::Matrix{T}, Z::Vector{T}, d::Real, g::Real) where {T<:Real}
     K = kernelmatrix(kernel, RowVecs(X))
     _add_nugget_diagonal!(K, g_T)
 
-    # Cholesky factorization
-    chol = cholesky(Symmetric(K))
+    c = _compute_gp_cache(K, Z)
 
-    # Cache inverse for gradient computations
-    Ki = inv(chol)
-
-    # Compute Ki * Z
-    KiZ = chol \ Z
-
-    # Compute phi = Z' * Ki * Z
-    phi = dot(Z, KiZ)
-
-    # Log determinant
-    ldetK = _compute_logdet_chol(chol)
-
-    # Cache trace of Ki for gradient computation
-    tr_Ki = tr(Ki)
-
-    return GP{T,typeof(kernel)}(copy(X), copy(Z), kernel, chol, Ki, KiZ, d_T, g_T, phi, ldetK, tr_Ki)
+    return GP{T,typeof(kernel)}(copy(X), copy(Z), kernel, c.chol, c.Ki, c.KiZ, d_T, g_T, c.phi, c.ldetK, c.tr_Ki)
 end
 
 """
@@ -475,58 +477,20 @@ function d2llik_gp(gp::GP{T}; d2g::Bool=true, d2d::Bool=true) where {T}
 end
 
 """
-    extend_gp!(gp, x_new, z_new)
+    _extend_gp_core!(gp, k, x_new, z_new)
 
-Extend a GP with a new observation using O(n²) incremental Cholesky update.
+Shared incremental Cholesky update logic for extending a GP with a new observation.
 
-This is much faster than rebuilding the GP from scratch when sequentially
-adding points, as it avoids the O(n³) full Cholesky factorization.
+Given the pre-computed kernel vector `k` between `x_new` and existing points,
+performs the O(n²) incremental Cholesky update, Ki block update, and all
+cached quantity updates (KiZ, phi, ldetK, tr_Ki).
 
-# Mathematical Background
-Given existing Cholesky L where K = LLᵀ, when adding a new point:
-
-```
-K_new = [K    k  ]
-        [kᵀ   κ  ]
-```
-
-The updated Cholesky is:
-```
-L_new = [L    0]
-        [lᵀ   λ]
-```
-
-Where:
-- l = L⁻¹ k (forward solve, O(n²))
-- λ = sqrt(κ + g - lᵀl)
-
-# Arguments
-- `gp::GP`: Gaussian Process model to extend
-- `x_new::AbstractVector`: new input point (length m)
-- `z_new::Real`: new output value
-
-# Returns
-- `gp`: The modified GP (for convenience, same object as input)
+Called by both `extend_gp!` (isotropic) and `extend_gp_sep!` (separable) after
+they compute the kernel vector using their respective kernel parameterizations.
 """
-function extend_gp!(gp::GP{T}, x_new::AbstractVector{T}, z_new::T) where {T}
+function _extend_gp_core!(gp::AnyGP{T}, k::Vector{T}, x_new::AbstractVector{T}, z_new::T) where {T}
     n = size(gp.X, 1)
     m = size(gp.X, 2)
-
-    @assert length(x_new) == m "x_new must have same dimension as GP inputs"
-
-    # Compute kernel values between new point and existing points
-    # k[i] = kernel(X[i,:], x_new) = exp(-||X[i,:] - x_new||² / d)
-    # where d is the laGP lengthscale parameter
-    k = Vector{T}(undef, n)
-    inv_d = one(T) / gp.d
-    @inbounds for i in 1:n
-        dist_sq = zero(T)
-        @turbo for j in 1:m
-            diff = gp.X[i, j] - x_new[j]
-            dist_sq += diff * diff
-        end
-        k[i] = exp(-dist_sq * inv_d)
-    end
 
     # κ = kernel(x_new, x_new) = 1 (self-covariance without nugget)
     κ = one(T)
@@ -581,10 +545,7 @@ function extend_gp!(gp::GP{T}, x_new::AbstractVector{T}, z_new::T) where {T}
     inv_s = one(T) / s
 
     # Build Ki_new without block concatenation
-    v_scaled = Vector{T}(undef, n)
-    @inbounds for i in 1:n
-        v_scaled[i] = v[i] * inv_s
-    end
+    v_scaled = v .* inv_s
     Ki_new = Matrix{T}(undef, n + 1, n + 1)
     Ki_ul = @view Ki_new[1:n, 1:n]
     copyto!(Ki_ul, gp.Ki)
@@ -632,6 +593,63 @@ function extend_gp!(gp::GP{T}, x_new::AbstractVector{T}, z_new::T) where {T}
 end
 
 """
+    extend_gp!(gp, x_new, z_new)
+
+Extend a GP with a new observation using O(n²) incremental Cholesky update.
+
+This is much faster than rebuilding the GP from scratch when sequentially
+adding points, as it avoids the O(n³) full Cholesky factorization.
+
+# Mathematical Background
+Given existing Cholesky L where K = LLᵀ, when adding a new point:
+
+```
+K_new = [K    k  ]
+        [kᵀ   κ  ]
+```
+
+The updated Cholesky is:
+```
+L_new = [L    0]
+        [lᵀ   λ]
+```
+
+Where:
+- l = L⁻¹ k (forward solve, O(n²))
+- λ = sqrt(κ + g - lᵀl)
+
+# Arguments
+- `gp::GP`: Gaussian Process model to extend
+- `x_new::AbstractVector`: new input point (length m)
+- `z_new::Real`: new output value
+
+# Returns
+- `gp`: The modified GP (for convenience, same object as input)
+"""
+function extend_gp!(gp::GP{T}, x_new::AbstractVector{T}, z_new::T) where {T}
+    n = size(gp.X, 1)
+    m = size(gp.X, 2)
+
+    @assert length(x_new) == m "x_new must have same dimension as GP inputs"
+
+    # Compute kernel values between new point and existing points
+    # k[i] = kernel(X[i,:], x_new) = exp(-||X[i,:] - x_new||² / d)
+    # where d is the laGP lengthscale parameter
+    k = Vector{T}(undef, n)
+    inv_d = one(T) / gp.d
+    @inbounds for i in 1:n
+        dist_sq = zero(T)
+        @turbo for j in 1:m
+            diff = gp.X[i, j] - x_new[j]
+            dist_sq += diff * diff
+        end
+        k[i] = exp(-dist_sq * inv_d)
+    end
+
+    return _extend_gp_core!(gp, k, x_new, z_new)
+end
+
+"""
     update_gp!(gp; d=nothing, g=nothing)
 
 Update GP hyperparameters and recompute internal quantities.
@@ -661,23 +679,13 @@ function update_gp!(gp::GP{T}; d::Union{Nothing,Real}=nothing,
         K = kernelmatrix(gp.kernel, RowVecs(gp.X))
         _add_nugget_diagonal!(K, gp.g)
 
-        # Recompute Cholesky
-        gp.chol = cholesky(Symmetric(K))
-
-        # Update cached inverse
-        gp.Ki .= inv(gp.chol)
-
-        # Recompute KiZ
-        gp.KiZ .= gp.chol \ gp.Z
-
-        # Recompute phi
-        gp.phi = dot(gp.Z, gp.KiZ)
-
-        # Recompute log determinant
-        gp.ldetK = _compute_logdet_chol(gp.chol)
-
-        # Recompute trace of Ki
-        gp.tr_Ki = tr(gp.Ki)
+        c = _compute_gp_cache(K, gp.Z)
+        gp.chol = c.chol
+        gp.Ki .= c.Ki
+        gp.KiZ .= c.KiZ
+        gp.phi = c.phi
+        gp.ldetK = c.ldetK
+        gp.tr_Ki = c.tr_Ki
     end
 
     return gp
@@ -719,25 +727,9 @@ function new_gp_sep(X::Matrix{T}, Z::Vector{T}, d::Vector{<:Real}, g::Real) wher
     _kernelmatrix_sep_train!(K, X, d_T)
     _add_nugget_diagonal!(K, g_T)
 
-    # Cholesky factorization
-    chol = cholesky(Symmetric(K))
+    c = _compute_gp_cache(K, Z)
 
-    # Cache inverse for gradient computations
-    Ki = inv(chol)
-
-    # Compute Ki * Z
-    KiZ = chol \ Z
-
-    # Compute phi = Z' * Ki * Z
-    phi = dot(Z, KiZ)
-
-    # Log determinant
-    ldetK = _compute_logdet_chol(chol)
-
-    # Cache trace of Ki for gradient computation
-    tr_Ki = tr(Ki)
-
-    return GPsep{T,typeof(kernel)}(copy(X), copy(Z), kernel, chol, Ki, KiZ, d_T, g_T, phi, ldetK, tr_Ki)
+    return GPsep{T,typeof(kernel)}(copy(X), copy(Z), kernel, c.chol, c.Ki, c.KiZ, d_T, g_T, c.phi, c.ldetK, c.tr_Ki)
 end
 
 """
@@ -946,23 +938,13 @@ function update_gp_sep!(gp::GPsep{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
         _kernelmatrix_sep_train!(K, gp.X, gp.d)
         _add_nugget_diagonal!(K, gp.g)
 
-        # Recompute Cholesky
-        gp.chol = cholesky(Symmetric(K))
-
-        # Update cached inverse
-        gp.Ki .= inv(gp.chol)
-
-        # Recompute KiZ
-        gp.KiZ .= gp.chol \ gp.Z
-
-        # Recompute phi
-        gp.phi = dot(gp.Z, gp.KiZ)
-
-        # Recompute log determinant
-        gp.ldetK = _compute_logdet_chol(gp.chol)
-
-        # Recompute trace of Ki
-        gp.tr_Ki = tr(gp.Ki)
+        c = _compute_gp_cache(K, gp.Z)
+        gp.chol = c.chol
+        gp.Ki .= c.Ki
+        gp.KiZ .= c.KiZ
+        gp.phi = c.phi
+        gp.ldetK = c.ldetK
+        gp.tr_Ki = c.tr_Ki
     end
 
     return gp
@@ -1024,102 +1006,5 @@ function extend_gp_sep!(gp::GPsep{T}, x_new::AbstractVector{T}, z_new::T) where 
         k[i] = exp(-weighted_dist_sq)
     end
 
-    # κ = kernel(x_new, x_new) = 1 (self-covariance without nugget)
-    κ = one(T)
-
-    # Forward solve: l = L⁻¹ k using existing Cholesky
-    # This is O(n²) via forward substitution
-    L = gp.chol.L
-    l = Vector{T}(undef, n)
-    ldiv!(l, L, k)
-
-    # Compute λ = sqrt(κ + g - lᵀl)
-    l_dot_l = dot(l, l)
-    λ_sq = κ + gp.g - l_dot_l
-
-    # Handle numerical issues - if λ² ≤ 0, the matrix would be non-positive-definite
-    if λ_sq <= zero(T)
-        λ = sqrt(eps(T))  # Small positive value to maintain positive-definiteness
-    else
-        λ = sqrt(λ_sq)
-    end
-
-    # Build new Cholesky factor L_new = [L 0; lᵀ λ] without block concatenation
-    L_new = Matrix{T}(undef, n + 1, n + 1)
-    @inbounds begin
-        for j in 1:n
-            for i in 1:n
-                L_new[i, j] = (i >= j) ? L[i, j] : zero(T)
-            end
-            L_new[j, n + 1] = zero(T)
-        end
-        for j in 1:n
-            L_new[n + 1, j] = l[j]
-        end
-        L_new[n + 1, n + 1] = λ
-    end
-    gp.chol = Cholesky(L_new, 'L', 0)
-
-    # Update Ki incrementally using block matrix inversion formula
-    # For K_new = [K k; kᵀ κ+g], Ki_new can be computed from Ki:
-    # Let v = Ki * k, s = κ + g - kᵀ * v = λ²
-    # Then:
-    #   Ki_new = [Ki + v*vᵀ/s   -v/s  ]
-    #            [   -vᵀ/s       1/s  ]
-    v = Vector{T}(undef, n)
-    mul!(v, gp.Ki, k)
-    s = λ_sq  # Already computed as κ + g - lᵀl (note: lᵀl = kᵀ Ki k when L = chol)
-
-    # Handle case where s is very small
-    if abs(s) < eps(T)
-        s = eps(T)
-    end
-    inv_s = one(T) / s
-
-    # Build Ki_new without block concatenation
-    v_scaled = v .* inv_s
-    Ki_new = Matrix{T}(undef, n + 1, n + 1)
-    Ki_ul = @view Ki_new[1:n, 1:n]
-    copyto!(Ki_ul, gp.Ki)
-    LinearAlgebra.BLAS.ger!(one(T), v, v_scaled, Ki_ul)
-    @inbounds for i in 1:n
-        Ki_new[i, n + 1] = -v_scaled[i]
-        Ki_new[n + 1, i] = -v_scaled[i]
-    end
-    Ki_new[n + 1, n + 1] = inv_s
-    gp.Ki = Ki_new
-
-    # Update X by appending new row
-    X_new = Matrix{T}(undef, n + 1, m)
-    copyto!(@view(X_new[1:n, 1:m]), gp.X)
-    @inbounds for j in 1:m
-        X_new[n + 1, j] = x_new[j]
-    end
-    gp.X = X_new
-
-    # Update Z by appending new value
-    Z_new = Vector{T}(undef, n + 1)
-    copyto!(Z_new, gp.Z)
-    Z_new[n + 1] = z_new
-    gp.Z = Z_new
-
-    # Update KiZ incrementally using block structure
-    vᵀZ = dot(v, @view gp.Z[1:n])
-    gp.KiZ .+= v .* ((vᵀZ - z_new) * inv_s)
-    push!(gp.KiZ, (z_new - vᵀZ) * inv_s)
-
-    # Update phi = Z_new' * Ki_new * Z_new
-    gp.phi = dot(gp.Z, gp.KiZ)
-
-    # Update log determinant: log|K_new| = log|K| + 2*log(λ)
-    gp.ldetK += 2 * log(λ)
-
-    # Update trace of Ki incrementally:
-    # tr(Ki_new) = tr(Ki) + tr(v*v'/s) + 1/s
-    #            = tr(Ki) + (v'*v)/s + 1/s
-    #            = tr(Ki) + (dot(v,v) + 1) / s
-    v_dot_v = dot(v, v)
-    gp.tr_Ki += (v_dot_v + one(T)) * inv_s
-
-    return gp
+    return _extend_gp_core!(gp, k, x_new, z_new)
 end

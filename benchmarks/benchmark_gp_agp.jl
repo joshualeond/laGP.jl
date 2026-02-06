@@ -143,7 +143,7 @@ end
 # ============================================================================
 
 function run_benchmark()
-    n_train_sizes = parse_int_list(get(ENV, "LAGP_N_TRAIN", ""), [100, 500, 1000, 2000, 5000])
+    n_train_sizes = parse_int_list(get(ENV, "LAGP_N_TRAIN", ""), [100, 500, 1000, 2000, 5000, 10_000, 20_000])
     n_test_grid = parse_int(get(ENV, "LAGP_N_TEST_GRID", "10"), 10)
     agp_start = parse_int(get(ENV, "LAGP_AGP_START", "6"), 6)
     agp_endpt = parse_int(get(ENV, "LAGP_AGP_ENDPT", "30"), 30)
