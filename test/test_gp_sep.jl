@@ -116,6 +116,48 @@ using Test
         @test result.its > 0
     end
 
+    @testset "mle_gp_sep! all d with no prior" begin
+        d = [0.5, 0.5]
+        g = 1e-3
+        gp = new_gp_sep(X, Z, d, g)
+        llik_init = llik_gp_sep(gp)
+
+        result = mle_gp_sep!(gp, :d; tmin=0.01, tmax=10.0, maxit=50, dab=nothing)
+
+        @test haskey(result, :d)
+        @test haskey(result, :g)
+        @test haskey(result, :its)
+        @test length(result.d) == m
+        @test all(0.01 .<= result.d .<= 10.0)
+        @test result.g == g
+        @test isfinite(llik_gp_sep(gp))
+        @test llik_gp_sep(gp) >= llik_init - 1e-8
+    end
+
+    @testset "fused separable d objective/gradient parity" begin
+        d_trial = [0.25, 1.1]
+        g_trial = 1e-3
+        gp_trial = new_gp_sep(X, Z, d_trial, g_trial)
+
+        n = size(X, 1)
+        ws = laGP._init_sep_d_mle_workspace(Float64, n, m)
+        x = log.(d_trial)
+        G = zeros(Float64, m)
+
+        nll = laGP._eval_sep_d_neg_posterior!(
+            0.0, G, x, gp_trial, ws;
+            has_prior=false,
+            d_shape=0.0,
+            d_scales=nothing,
+        )
+
+        nll_ref = -llik_gp_sep(gp_trial)
+        grad_ref = -dllik_gp_sep(gp_trial; dg=false, dd=true).dlld .* d_trial
+
+        @test nll ≈ nll_ref rtol=1e-10 atol=1e-10
+        @test G ≈ grad_ref rtol=1e-6 atol=1e-8
+    end
+
     @testset "dllik_gp_sep gradient" begin
         # Test gradient via centered finite differences for better accuracy
         d = [0.1, 1.0]
@@ -217,5 +259,34 @@ using Test
 
         # Separable should perform better or similarly on anisotropic data
         @test rmse_sep <= rmse_iso * 1.5  # Allow some slack due to random data
+    end
+
+    @testset "extend_gp_sep! incremental update" begin
+        d = [0.2, 0.9]
+        g = 1e-4
+
+        # Start from a subset and append points one at a time
+        X_start = X[1:8, :]
+        Z_start = Z[1:8]
+        gp_inc = new_gp_sep(X_start, Z_start, d, g)
+
+        for i in 9:n
+            extend_gp_sep!(gp_inc, @view(X[i, :]), Z[i])
+        end
+
+        # Full rebuild reference
+        gp_full = new_gp_sep(X, Z, d, g)
+
+        pred_inc = pred_gp_sep(gp_inc, XX; lite=true)
+        pred_full = pred_gp_sep(gp_full, XX; lite=true)
+
+        @test pred_inc.mean ≈ pred_full.mean rtol=1e-5
+        @test pred_inc.s2 ≈ pred_full.s2 rtol=1e-5
+        @test llik_gp_sep(gp_inc) ≈ llik_gp_sep(gp_full) rtol=1e-5
+
+        @test gp_inc.phi ≈ gp_full.phi rtol=1e-5
+        @test gp_inc.ldetK ≈ gp_full.ldetK rtol=1e-5
+        @test gp_inc.KiZ ≈ gp_full.KiZ rtol=1e-5
+        @test gp_inc.Ki ≈ gp_full.Ki rtol=1e-4
     end
 end

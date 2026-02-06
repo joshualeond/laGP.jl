@@ -52,6 +52,108 @@ function _compute_squared_distance_matrix!(D_sq::Matrix{T}, X::Matrix{T}) where 
 end
 
 """
+    _kernelmatrix_sep_train!(K, X, d)
+
+Build separable squared-exponential kernel matrix in-place:
+K[i,j] = exp(-sum((X[i,k]-X[j,k])^2 / d[k] for k in 1:m))
+
+Uses SIMD vectorization and optional threading for large matrices.
+"""
+function _kernelmatrix_sep_train!(K::Matrix{T}, X::Matrix{T}, d::Vector{T}) where {T}
+    n, m = size(X)
+    @assert size(K, 1) == n && size(K, 2) == n "K must be n x n"
+    @assert length(d) == m "d must have length m"
+
+    inv_d = Vector{T}(undef, m)
+    @inbounds @turbo for k in 1:m
+        inv_d[k] = one(T) / d[k]
+    end
+
+    @inbounds for i in 1:n
+        K[i, i] = one(T)
+    end
+
+    if n > 1
+        if Threads.nthreads() > 1 && n >= 256
+            Threads.@threads for i in 1:(n - 1)
+                for j in (i + 1):n
+                    weighted_dist_sq = zero(T)
+                    @turbo for k in 1:m
+                        diff = X[i, k] - X[j, k]
+                        weighted_dist_sq += diff * diff * inv_d[k]
+                    end
+                    kij = exp(-weighted_dist_sq)
+                    K[i, j] = kij
+                    K[j, i] = kij
+                end
+            end
+        else
+            @inbounds for i in 1:(n - 1)
+                for j in (i + 1):n
+                    weighted_dist_sq = zero(T)
+                    @turbo for k in 1:m
+                        diff = X[i, k] - X[j, k]
+                        weighted_dist_sq += diff * diff * inv_d[k]
+                    end
+                    kij = exp(-weighted_dist_sq)
+                    K[i, j] = kij
+                    K[j, i] = kij
+                end
+            end
+        end
+    end
+
+    return K
+end
+
+"""
+    _kernelmatrix_sep_cross!(Kxy, X, XX, d)
+
+Build separable cross-covariance matrix in-place:
+Kxy[i,j] = exp(-sum((X[i,k]-XX[j,k])^2 / d[k] for k in 1:m))
+
+Uses SIMD vectorization and optional threading for large cross-products.
+"""
+function _kernelmatrix_sep_cross!(Kxy::Matrix{T}, X::Matrix{T}, XX::Matrix{T}, d::Vector{T}) where {T}
+    n, m = size(X)
+    n_test, m_test = size(XX)
+    @assert m_test == m "XX must have same number of columns as X"
+    @assert size(Kxy, 1) == n && size(Kxy, 2) == n_test "Kxy must be n x n_test"
+    @assert length(d) == m "d must have length m"
+
+    inv_d = Vector{T}(undef, m)
+    @inbounds @turbo for k in 1:m
+        inv_d[k] = one(T) / d[k]
+    end
+
+    if Threads.nthreads() > 1 && (n * n_test) >= 200_000
+        Threads.@threads for j in 1:n_test
+            @inbounds for i in 1:n
+                weighted_dist_sq = zero(T)
+                @turbo for k in 1:m
+                    diff = X[i, k] - XX[j, k]
+                    weighted_dist_sq += diff * diff * inv_d[k]
+                end
+                Kxy[i, j] = exp(-weighted_dist_sq)
+            end
+        end
+    else
+        @inbounds for j in 1:n_test
+            for i in 1:n
+                weighted_dist_sq = zero(T)
+                @turbo for k in 1:m
+                    diff = X[i, k] - XX[j, k]
+                    weighted_dist_sq += diff * diff * inv_d[k]
+                end
+                Kxy[i, j] = exp(-weighted_dist_sq)
+            end
+        end
+    end
+
+    return Kxy
+end
+
+"""
     _add_nugget_diagonal!(K, g)
 
 Add nugget to diagonal of matrix K in-place.
@@ -305,6 +407,7 @@ Used by Newton's method for 1D parameter optimization.
 """
 function d2llik_gp(gp::GP{T}; d2g::Bool=true, d2d::Bool=true) where {T}
     n = length(gp.Z)
+    dn = T(n)
     Ki = gp.Ki
     KiZ = gp.KiZ
     phi = gp.phi
@@ -319,14 +422,13 @@ function d2llik_gp(gp::GP{T}; d2g::Bool=true, d2d::Bool=true) where {T}
         Ki_KiZ = Ki * KiZ
         quad_term = dot(KiZ, Ki_KiZ)
 
-        # (KiZ' * KiZ / phi)² = (phi / phi)² = 1 -- wait, that's not right
-        # KiZ' * KiZ = Z' * Ki' * Ki * Z, but phi = Z' * Ki * Z
-        # So phirat = KiZ' * KiZ / phi
+        # (KiZ' * KiZ / phi)²
         KiZ_dot = dot(KiZ, KiZ)
         phirat_sq = (KiZ_dot / phi)^2
 
-        # d²llik/dg² = -0.5 * tr(Ki²) + (n/phi) * KiZ'*Ki*KiZ - 0.5*n*phirat²
-        d2llg = -T(0.5) * tr_Ki_sq + (n / phi) * quad_term - T(0.5) * n * phirat_sq
+        # Matches the original laGP C implementation
+        # d²llik/dg² = 0.5*tr(Ki²) - (n/phi)*KiZ'*Ki*KiZ + 0.5*n*phirat²
+        d2llg = T(0.5) * tr_Ki_sq - (dn / phi) * quad_term + T(0.5) * dn * phirat_sq
     end
 
     # Second derivative w.r.t. lengthscale d
@@ -352,24 +454,21 @@ function d2llik_gp(gp::GP{T}; d2g::Bool=true, d2d::Bool=true) where {T}
         #              = K[i,j] * D²[i,j] / d² * (D²[i,j]/d² - 2/d)
         d2K = dK .* (D_sq .* inv_d_sq .- 2 / d)
 
-        # First partial of phi w.r.t. d: dφ/dd = -2 * KiZ' * dK * KiZ
-        dK_KiZ = dK * KiZ
-        dlphi = -2 * dot(KiZ, dK_KiZ)
-
-        # Second partial of phi w.r.t. d: d²φ/dd² = 2*KiZ'*dK*Ki*dK*KiZ - 2*KiZ'*d²K*KiZ
-        Ki_dK_KiZ = Ki * dK_KiZ
-        d2phi = 2 * dot(dK_KiZ, Ki_dK_KiZ) - 2 * dot(KiZ, d2K * KiZ)
-
-        # tr(Ki * dK * Ki * dK) = sum((Ki * dK) .* (Ki * dK)')
+        # Original laGP C expression:
+        # d²llik/dd² = -0.5*tr(Ki*(d2K - dK*Ki*dK))
+        #              -0.5*(n/phi)*KiZ'*(2*dK*Ki*dK - d2K)*KiZ
+        #              +0.5*n*(KiZ'*dK*KiZ/phi)^2
         Ki_dK = Ki * dK
-        tr_KidK_sq = sum(Ki_dK .* Ki_dK')
+        dKKidK = dK * Ki_dK
 
-        # tr(Ki * d²K)
-        tr_Ki_d2K = sum(Ki .* d2K')
+        tr_term = sum(Ki .* transpose(d2K .- dKKidK))
+        two = 2 .* dKKidK .- d2K
+        quad_two = dot(KiZ, two * KiZ)
+        phirat = dot(KiZ, dK * KiZ) / phi
 
-        # d²llik/dd² = 0.5*tr(Ki*dK*Ki*dK) - 0.5*tr(Ki*d²K) + 0.5*(n/phi)*(d²φ - (dφ)²/phi)
-        d2lld = T(0.5) * tr_KidK_sq - T(0.5) * tr_Ki_d2K +
-                T(0.5) * (n / phi) * (d2phi - dlphi^2 / phi)
+        d2lld = -T(0.5) * tr_term -
+                T(0.5) * (dn / phi) * quad_two +
+                T(0.5) * dn * phirat^2
     end
 
     return (d2llg=d2llg, d2lld=d2lld)
@@ -615,8 +714,9 @@ function new_gp_sep(X::Matrix{T}, Z::Vector{T}, d::Vector{<:Real}, g::Real) wher
     # Build separable kernel using AbstractGPs adapter
     kernel = build_kernel_separable(d_T)
 
-    # Compute covariance matrix with nugget
-    K = kernelmatrix(kernel, RowVecs(X))
+    # Compute covariance matrix with nugget using specialized separable kernel
+    K = Matrix{T}(undef, n, n)
+    _kernelmatrix_sep_train!(K, X, d_T)
     _add_nugget_diagonal!(K, g_T)
 
     # Cholesky factorization
@@ -657,8 +757,9 @@ function pred_gp_sep(gp::GPsep{T}, XX::Matrix{T}; lite::Bool=true) where {T}
     n = size(gp.X, 1)
     n_test = size(XX, 1)
 
-    # Cross-covariance using kernel
-    k = kernelmatrix(gp.kernel, RowVecs(gp.X), RowVecs(XX))
+    # Cross-covariance using specialized separable kernel
+    k = Matrix{T}(undef, n, n_test)
+    _kernelmatrix_sep_cross!(k, gp.X, XX, gp.d)
 
     # Mean prediction: mu = k' * Ki * Z
     mean_pred = k' * gp.KiZ
@@ -676,7 +777,8 @@ function pred_gp_sep(gp::GPsep{T}, XX::Matrix{T}; lite::Bool=true) where {T}
         scale = gp.phi / n
 
         # Compute K(XX, XX) + g*I (test-test covariance)
-        K_test = kernelmatrix(gp.kernel, RowVecs(XX))
+        K_test = Matrix{T}(undef, n_test, n_test)
+        _kernelmatrix_sep_train!(K_test, XX, gp.d)
         _add_nugget_diagonal!(K_test, gp.g)
 
         # Sigma = scale * (K_test - k' * Kik)
@@ -731,7 +833,8 @@ function dllik_gp_sep(gp::GPsep{T}; dg::Bool=true, dd::Bool=true) where {T}
     dlld = zeros(T, m)
     if dd
         X = gp.X
-        K_no_nugget = kernelmatrix(gp.kernel, RowVecs(X))
+        K_no_nugget = Matrix{T}(undef, n, n)
+        _kernelmatrix_sep_train!(K_no_nugget, X, gp.d)
         phi_factor = T(0.5) * (n / gp.phi)
 
         # Vectorized gradient computation using BLAS operations
@@ -786,6 +889,7 @@ Used by Newton's method for 1D nugget optimization.
 """
 function d2llik_gp_sep_nug(gp::GPsep{T}) where {T}
     n = length(gp.Z)
+    dn = T(n)
     Ki = gp.Ki
     KiZ = gp.KiZ
     phi = gp.phi
@@ -801,8 +905,9 @@ function d2llik_gp_sep_nug(gp::GPsep{T}) where {T}
     KiZ_dot = dot(KiZ, KiZ)
     phirat_sq = (KiZ_dot / phi)^2
 
-    # d²llik/dg² = -0.5 * tr(Ki²) + (n/phi) * KiZ'*Ki*KiZ - 0.5*n*phirat²
-    return -T(0.5) * tr_Ki_sq + (n / phi) * quad_term - T(0.5) * n * phirat_sq
+    # Matches the original laGP C implementation
+    # d²llik/dg² = 0.5*tr(Ki²) - (n/phi)*KiZ'*Ki*KiZ + 0.5*n*phirat²
+    return T(0.5) * tr_Ki_sq - (dn / phi) * quad_term + T(0.5) * dn * phirat_sq
 end
 
 """
@@ -836,7 +941,9 @@ function update_gp_sep!(gp::GPsep{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
 
     if changed
         # Recompute covariance matrix
-        K = kernelmatrix(gp.kernel, RowVecs(gp.X))
+        n = size(gp.X, 1)
+        K = Matrix{T}(undef, n, n)
+        _kernelmatrix_sep_train!(K, gp.X, gp.d)
         _add_nugget_diagonal!(K, gp.g)
 
         # Recompute Cholesky
@@ -904,11 +1011,15 @@ function extend_gp_sep!(gp::GPsep{T}, x_new::AbstractVector{T}, z_new::T) where 
     # Compute kernel values between new point and existing points
     # Separable kernel: k[i] = exp(-sum((X[i,j] - x_new[j])^2 / d[j] for j in 1:m))
     k = Vector{T}(undef, n)
+    inv_d = similar(gp.d)
+    @inbounds @turbo for j in 1:m
+        inv_d[j] = one(T) / gp.d[j]
+    end
     @inbounds for i in 1:n
         weighted_dist_sq = zero(T)
         @turbo for j in 1:m
             diff = gp.X[i, j] - x_new[j]
-            weighted_dist_sq += diff * diff / gp.d[j]
+            weighted_dist_sq += diff * diff * inv_d[j]
         end
         k[i] = exp(-weighted_dist_sq)
     end
@@ -919,7 +1030,8 @@ function extend_gp_sep!(gp::GPsep{T}, x_new::AbstractVector{T}, z_new::T) where 
     # Forward solve: l = L⁻¹ k using existing Cholesky
     # This is O(n²) via forward substitution
     L = gp.chol.L
-    l = L \ k
+    l = Vector{T}(undef, n)
+    ldiv!(l, L, k)
 
     # Compute λ = sqrt(κ + g - lᵀl)
     l_dot_l = dot(l, l)
@@ -932,8 +1044,20 @@ function extend_gp_sep!(gp::GPsep{T}, x_new::AbstractVector{T}, z_new::T) where 
         λ = sqrt(λ_sq)
     end
 
-    # Build new Cholesky factor L_new = [L 0; lᵀ λ] using block concatenation
-    L_new = [L zeros(T, n); l' λ]
+    # Build new Cholesky factor L_new = [L 0; lᵀ λ] without block concatenation
+    L_new = Matrix{T}(undef, n + 1, n + 1)
+    @inbounds begin
+        for j in 1:n
+            for i in 1:n
+                L_new[i, j] = (i >= j) ? L[i, j] : zero(T)
+            end
+            L_new[j, n + 1] = zero(T)
+        end
+        for j in 1:n
+            L_new[n + 1, j] = l[j]
+        end
+        L_new[n + 1, n + 1] = λ
+    end
     gp.chol = Cholesky(L_new, 'L', 0)
 
     # Update Ki incrementally using block matrix inversion formula
@@ -942,7 +1066,8 @@ function extend_gp_sep!(gp::GPsep{T}, x_new::AbstractVector{T}, z_new::T) where 
     # Then:
     #   Ki_new = [Ki + v*vᵀ/s   -v/s  ]
     #            [   -vᵀ/s       1/s  ]
-    v = gp.Ki * k
+    v = Vector{T}(undef, n)
+    mul!(v, gp.Ki, k)
     s = λ_sq  # Already computed as κ + g - lᵀl (note: lᵀl = kᵀ Ki k when L = chol)
 
     # Handle case where s is very small
@@ -951,20 +1076,35 @@ function extend_gp_sep!(gp::GPsep{T}, x_new::AbstractVector{T}, z_new::T) where 
     end
     inv_s = one(T) / s
 
-    # Build Ki_new using efficient in-place update of upper-left block
-    # followed by block concatenation for new row/column
+    # Build Ki_new without block concatenation
     v_scaled = v .* inv_s
-    gp.Ki .+= v * v_scaled'  # Update upper-left block in-place
-    gp.Ki = [gp.Ki -v_scaled; -v_scaled' inv_s]
+    Ki_new = Matrix{T}(undef, n + 1, n + 1)
+    Ki_ul = @view Ki_new[1:n, 1:n]
+    copyto!(Ki_ul, gp.Ki)
+    LinearAlgebra.BLAS.ger!(one(T), v, v_scaled, Ki_ul)
+    @inbounds for i in 1:n
+        Ki_new[i, n + 1] = -v_scaled[i]
+        Ki_new[n + 1, i] = -v_scaled[i]
+    end
+    Ki_new[n + 1, n + 1] = inv_s
+    gp.Ki = Ki_new
 
     # Update X by appending new row
-    gp.X = vcat(gp.X, x_new')
+    X_new = Matrix{T}(undef, n + 1, m)
+    copyto!(@view(X_new[1:n, 1:m]), gp.X)
+    @inbounds for j in 1:m
+        X_new[n + 1, j] = x_new[j]
+    end
+    gp.X = X_new
 
     # Update Z by appending new value
-    push!(gp.Z, z_new)
+    Z_new = Vector{T}(undef, n + 1)
+    copyto!(Z_new, gp.Z)
+    Z_new[n + 1] = z_new
+    gp.Z = Z_new
 
     # Update KiZ incrementally using block structure
-    vᵀZ = dot(v, gp.Z[1:n])
+    vᵀZ = dot(v, @view gp.Z[1:n])
     gp.KiZ .+= v .* ((vᵀZ - z_new) * inv_s)
     push!(gp.KiZ, (z_new - vᵀZ) * inv_s)
 

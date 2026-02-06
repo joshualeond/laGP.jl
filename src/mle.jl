@@ -1,5 +1,6 @@
 # MLE functions for GP hyperparameter optimization
 
+import Optim
 using Optim: Brent, LBFGS, Fminbox, optimize, minimizer, converged, only_fg!
 using SpecialFunctions: loggamma
 using LoopVectorization: @turbo
@@ -285,7 +286,8 @@ end
 
 Compute default arguments for lengthscale parameter.
 
-Based on pairwise distances in the design matrix X.
+Based on pairwise distances in the design matrix X. If `d` is provided,
+it is used as the returned starting value.
 
 # Arguments
 - `X::Matrix`: design matrix
@@ -320,8 +322,13 @@ function darg(X::Matrix{T}; d::Union{Nothing,Real}=nothing,
     sort!(distances)
 
     # Compute quantiles using R's type 7 method
-    # start = 10th percentile
-    d_start = _quantile_type7(distances, 0.1)
+    # start = 10th percentile unless user-specified
+    if isnothing(d)
+        d_start = _quantile_type7(distances, 0.1)
+    else
+        @assert d > 0 "d must be positive"
+        d_start = T(d)
+    end
 
     # max = maximum distance
     d_max = maximum(distances)
@@ -338,7 +345,8 @@ end
 
 Compute default arguments for nugget parameter.
 
-Based on squared residuals from the mean.
+Based on squared residuals from the mean. If `g` is provided,
+it is used as the returned starting value.
 
 # Arguments
 - `Z::Vector`: response values
@@ -355,16 +363,22 @@ function garg(Z::Vector{T}; g::Union{Nothing,Real}=nothing,
     r2s = [(z - z_mean)^2 for z in Z]
     sort!(r2s)
 
-    # start = 2.5th percentile of r2s using R's type 7 method
-    g_start = _quantile_type7(r2s, 0.025)
+    # start = 2.5th percentile unless user-specified
+    if isnothing(g)
+        g_start = _quantile_type7(r2s, 0.025)
+    else
+        @assert g > 0 "g must be positive"
+        g_start = T(g)
+    end
 
-    # max = max of r2s (for mle=TRUE)
+    # max = max of r2s
     g_max = maximum(r2s)
 
     # min = sqrt(machine epsilon)
     g_min = sqrt(eps(T))
 
-    return (start=g_start, min=g_min, max=g_max, mle=true, ab=ab)
+    # Match laGP behavior: default is fixed nugget unless user explicitly opts-in
+    return (start=g_start, min=g_min, max=g_max, mle=false, ab=ab)
 end
 
 # ============================================================================
@@ -500,6 +514,151 @@ function mle_gp_sep!(gp::GPsep{T}, param::Symbol, dim::Union{Int,Nothing}=nothin
     return (d=copy(gp.d), g=gp.g, its=its, msg="converged")
 end
 
+mutable struct _SepDMLEWorkspace{T}
+    d_work::Vector{T}
+    K_no_nugget::Matrix{T}
+    K::Matrix{T}
+    Ki::Matrix{T}
+    KiZ::Vector{T}
+    WK::Matrix{T}
+    WK_quad::Matrix{T}
+    row_sums::Vector{T}
+    row_sums_quad::Vector{T}
+    tmp1::Vector{T}
+    tmp2::Vector{T}
+end
+
+function _init_sep_d_mle_workspace(::Type{T}, n::Int, m::Int) where {T}
+    return _SepDMLEWorkspace{T}(
+        Vector{T}(undef, m),
+        Matrix{T}(undef, n, n),
+        Matrix{T}(undef, n, n),
+        Matrix{T}(undef, n, n),
+        Vector{T}(undef, n),
+        Matrix{T}(undef, n, n),
+        Matrix{T}(undef, n, n),
+        Vector{T}(undef, n),
+        Vector{T}(undef, n),
+        Vector{T}(undef, n),
+        Vector{T}(undef, n),
+    )
+end
+
+function _set_identity!(A::Matrix{T}) where {T}
+    n = size(A, 1)
+    @assert size(A, 2) == n "identity target must be square"
+    fill!(A, zero(T))
+    @inbounds for i in 1:n
+        A[i, i] = one(T)
+    end
+    return A
+end
+
+function _eval_sep_d_neg_posterior!(
+    F,
+    G,
+    x::AbstractVector{T},
+    gp::GPsep{T},
+    ws::_SepDMLEWorkspace{T};
+    has_prior::Bool=false,
+    d_shape::T=zero(T),
+    d_scales::Union{Nothing,Vector{T}}=nothing,
+) where {T}
+    n = size(gp.X, 1)
+    m = size(gp.X, 2)
+    dn = T(n)
+    compute_grad = G !== nothing
+
+    @inbounds for k in 1:m
+        ws.d_work[k] = exp(x[k])
+    end
+
+    if compute_grad
+        _kernelmatrix_sep_train!(ws.K_no_nugget, gp.X, ws.d_work)
+        copyto!(ws.K, ws.K_no_nugget)
+    else
+        _kernelmatrix_sep_train!(ws.K, gp.X, ws.d_work)
+    end
+    _add_nugget_diagonal!(ws.K, gp.g)
+
+    chol = cholesky(Symmetric(ws.K))
+
+    _set_identity!(ws.Ki)
+    ldiv!(chol, ws.Ki)
+
+    copyto!(ws.KiZ, gp.Z)
+    ldiv!(chol, ws.KiZ)
+
+    phi = dot(gp.Z, ws.KiZ)
+    ldetK = _compute_logdet_chol(chol)
+    nll = -_concentrated_llik(n, phi, ldetK)
+
+    if has_prior
+        @assert d_scales !== nothing
+        @inbounds for k in 1:m
+            nll += -log_invgamma(ws.d_work[k], d_shape, d_scales[k])
+        end
+    end
+
+    if compute_grad
+        @inbounds for i in 1:n
+            KiZ_i = ws.KiZ[i]
+            s = zero(T)
+            sq = zero(T)
+            for j in 1:n
+                kij = ws.K_no_nugget[i, j]
+
+                w = ws.Ki[i, j] * kij
+                ws.WK[i, j] = w
+                s += w
+
+                wq = KiZ_i * ws.KiZ[j] * kij
+                ws.WK_quad[i, j] = wq
+                sq += wq
+            end
+            ws.row_sums[i] = s
+            ws.row_sums_quad[i] = sq
+        end
+
+        phi_factor = T(0.5) * (dn / phi)
+        @inbounds for k in 1:m
+            x_k = @view gp.X[:, k]
+            inv_dk_sq = one(T) / (ws.d_work[k] * ws.d_work[k])
+
+            mul!(ws.tmp1, ws.WK, x_k)
+            mul!(ws.tmp2, ws.WK_quad, x_k)
+
+            tr_acc1 = zero(T)
+            tr_acc2 = zero(T)
+            q_acc1 = zero(T)
+            q_acc2 = zero(T)
+            for i in 1:n
+                xi = x_k[i]
+                xi_sq = xi * xi
+                tr_acc1 += xi_sq * ws.row_sums[i]
+                tr_acc2 += xi * ws.tmp1[i]
+                q_acc1 += xi_sq * ws.row_sums_quad[i]
+                q_acc2 += xi * ws.tmp2[i]
+            end
+
+            tr_term = 2 * (tr_acc1 - tr_acc2) * inv_dk_sq
+            quad_term = 2 * (q_acc1 - q_acc2) * inv_dk_sq
+            dlld_k = -T(0.5) * tr_term + phi_factor * quad_term
+
+            G[k] = -dlld_k * ws.d_work[k]
+            if has_prior
+                @assert d_scales !== nothing
+                G[k] += -dlog_invgamma(ws.d_work[k], d_shape, d_scales[k]) * ws.d_work[k]
+            end
+        end
+    end
+
+    if F !== nothing
+        return nll
+    end
+    return nothing
+end
+
 """
     mle_gp_sep_d!(gp; drange, maxit=100, verb=0, dab=(3/2, nothing))
 
@@ -521,6 +680,7 @@ function mle_gp_sep_d!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tup
                        maxit::Int=100, verb::Int=0,
                        dab::Union{Nothing,Tuple{Real,Union{Real,Nothing}}}=(3/2, nothing)) where {T}
     m = length(gp.d)
+    n = size(gp.X, 1)
 
     # Convert drange to per-dimension ranges
     if drange isa Tuple
@@ -547,35 +707,20 @@ function mle_gp_sep_d!(gp::GPsep{T}; drange::Union{Tuple{Real,Real},Vector{<:Tup
     x0 = log.(gp.d)
     lower = [log(T(r[1])) for r in d_ranges]
     upper = [log(T(r[2])) for r in d_ranges]
+    workspace = _init_sep_d_mle_workspace(T, n, m)
 
     # Objective: negative log-POSTERIOR (with fixed g)
     function neg_posterior!(F, G, x)
-        d_new = exp.(x)
-        update_gp_sep!(gp; d=d_new)
-
-        if G !== nothing
-            grad = dllik_gp_sep(gp; dg=false, dd=true)
-            G[1:m] .= -grad.dlld .* d_new
-            if has_prior
-                for k in 1:m
-                    G[k] += -dlog_invgamma(d_new[k], d_shape, d_scales[k]) * d_new[k]
-                end
-            end
-        end
-
-        if F !== nothing
-            nll = -llik_gp_sep(gp)
-            if has_prior
-                for k in 1:m
-                    nll += -log_invgamma(d_new[k], d_shape, d_scales[k])
-                end
-            end
-            return nll
-        end
+        return _eval_sep_d_neg_posterior!(
+            F, G, x, gp, workspace;
+            has_prior=has_prior,
+            d_shape=d_shape,
+            d_scales=has_prior ? d_scales : nothing,
+        )
     end
 
     result = optimize(only_fg!(neg_posterior!), lower, upper, x0,
-                      Fminbox(LBFGS()),
+                      Fminbox(LBFGS(linesearch=Optim.LineSearches.BackTracking())),
                       Optim.Options(iterations=maxit, g_tol=T(1e-6),
                                     show_trace=(verb > 0)))
 
@@ -707,17 +852,18 @@ end
 Compute default arguments for lengthscale parameters (separable version).
 
 Mirrors laGP's `darg` behavior: uses pairwise squared distances to set
-start/min/max, then applies those same ranges to each dimension.
+start/min/max, then applies those same ranges to each dimension unless
+`d` is user-specified.
 
 # Arguments
 - `X::Matrix`: design matrix
-- `d::Union{Nothing,Vector}`: user-specified d (optional)
+- `d::Union{Nothing,Real,Vector}`: user-specified d start(s) (optional)
 - `ab::Tuple`: (shape, scale) for Inverse-Gamma prior; if scale=nothing, computed from range
 
 # Returns
 - `NamedTuple`: (ranges=..., ab=...) where ranges is Vector of per-dimension NamedTuples
 """
-function darg_sep(X::Matrix{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
+function darg_sep(X::Matrix{T}; d::Union{Nothing,Real,Vector{<:Real}}=nothing,
                   ab::Tuple{Real,Union{Real,Nothing}}=(3/2, nothing)) where {T}
     n, m = size(X)
 
@@ -741,9 +887,8 @@ function darg_sep(X::Matrix{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
     resize!(distances, n_nonzero)
     sort!(distances)
 
-    # Compute quantiles using R's type 7 method
-    # start = 10th percentile of pairwise squared distances
-    d_start = _quantile_type7(distances, 0.1)
+    # Compute default start from quantiles (type 7)
+    d_start_default = _quantile_type7(distances, 0.1)
 
     # max = max pairwise squared distance
     d_max = maximum(distances)
@@ -754,10 +899,28 @@ function darg_sep(X::Matrix{T}; d::Union{Nothing,Vector{<:Real}}=nothing,
         d_min = sqrt(eps(T))
     end
 
-    # Return same range for all dimensions - MLE will differentiate them
+    # User-specified starts (if provided)
+    starts = if isnothing(d)
+        fill(d_start_default, m)
+    elseif d isa Real
+        @assert d > 0 "d must be positive"
+        fill(T(d), m)
+    else
+        d_vec = T.(d)
+        if length(d_vec) == 1
+            @assert d_vec[1] > 0 "d must be positive"
+            fill(d_vec[1], m)
+        else
+            @assert length(d_vec) == m "d must have length 1 or $m"
+            @assert all(d_vec .> 0) "all entries in d must be positive"
+            d_vec
+        end
+    end
+
+    # Return same min/max range for all dimensions; starts may differ
     results = Vector{NamedTuple{(:start, :min, :max, :mle),Tuple{T,T,T,Bool}}}(undef, m)
     for dim in 1:m
-        results[dim] = (start=d_start, min=d_min, max=d_max, mle=true)
+        results[dim] = (start=starts[dim], min=d_min, max=d_max, mle=true)
     end
 
     return (ranges=results, ab=ab)
