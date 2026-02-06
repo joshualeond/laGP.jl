@@ -21,6 +21,7 @@ makedocs(
             "Wing Weight Surrogate" => "examples/surrogates.md",
             "Satellite Drag Modeling" => "examples/satellite.md",
             "Bayesian Optimization" => "examples/bayesian_optimization.md",
+            "Chemical Yield Optimization" => "examples/chemical_yield.md",
         ],
         "API Reference" => "api.md",
     ],
